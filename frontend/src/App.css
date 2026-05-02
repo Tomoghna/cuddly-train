@@ -1,0 +1,6 @@
+.app-bg {
+    background-image: url('./assets/background.png');
+    background-size: cover;
+    background-position: center;
+    min-height: 100vh;
+}

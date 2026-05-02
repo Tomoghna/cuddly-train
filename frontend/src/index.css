@@ -1,0 +1,40 @@
+:root{
+  --base-font: 16px;
+  --card-width: 100px;
+  --card-height: 140px;
+  --deck-width: 100px;
+  --deck-height: 140px;
+  --table-height: 900px;
+}
+
+html,body,#root{height:100%;}
+body{
+  margin:0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: var(--base-font);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  background: #0b1220;
+}
+
+@media (max-width: 1024px){
+  :root{
+    --card-width: 80px;
+    --card-height: 110px;
+    --deck-width: 80px;
+    --deck-height: 110px;
+    --table-height: 600px;
+    --base-font: 15px;
+  }
+}
+
+@media (max-width: 480px){
+  :root{
+    --card-width: 64px;
+    --card-height: 92px;
+    --deck-width: 64px;
+    --deck-height: 92px;
+    --table-height: 420px;
+    --base-font: 14px;
+  }
+}
