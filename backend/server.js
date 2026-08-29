@@ -4,7 +4,9 @@ import http from 'http';
 import { Server } from 'socket.io';
 import {
   createGame,
+  roomExists,
   getState,
+  setRoomHost,
   startGame,
   finishGame,
   advanceTurn,
@@ -120,25 +122,26 @@ function normalizeRoomId(r) {
 io.on('connection', (socket) => {
   console.log('socket connected', socket.id);
 
-  socket.on('join', ({ roomId, playerName, maxPlayers = 4 } = {}) => {
+  socket.on('join', ({ roomId, playerName } = {}) => {
     try {
-      console.log(`[server] join request: socket=${socket.id} room=${roomId} playerName=${playerName} maxPlayers=${maxPlayers}`);
       const normalized = normalizeRoomId(roomId);
-      const id = normalized || `room-${socket.id.slice(0,6)}`;
-      socket.join(id);
-      const state = addPlayer(id, playerName || `Player-${socket.id.slice(0,4)}`, maxPlayers);
-      console.log(`[server] join: added player -> room=${id} players=${state.players.map(p=>p.id).join(',')}`);
-      // assign token for the newly added player (last index)
+      console.log(`[server] join request: socket=${socket.id} room=${normalized} playerName=${playerName}`);
+      if (!normalized || !roomExists(normalized)) {
+        throw new Error('Room not found');
+      }
+      socket.join(normalized);
+      const state = addPlayer(normalized, playerName || `Player-${socket.id.slice(0,4)}`);
+      console.log(`[server] join: added player -> room=${normalized} players=${state.players.map(p => p.id).join(',')}`);
       const newPlayerId = `${state.players.length}`;
-      assignTokenForPlayer(id, newPlayerId).then((token) => {
-        io.to(id).emit('state', state);
-        socket.emit('joined', { roomId: id, playerId: newPlayerId, token, maxPlayers });
+      assignTokenForPlayer(normalized, newPlayerId).then((token) => {
+        io.to(normalized).emit('state', state);
+        socket.emit('joined', { roomId: normalized, playerId: newPlayerId, token, maxPlayers: state.maxPlayers });
       }).catch((err) => socket.emit('error', err.message));
     } catch (err) {
       const msg = err && err.message ? err.message : 'Unknown error';
       console.error('[server] join error', msg);
       if (msg === 'Room is full') {
-        socket.emit('room-full', { roomId: roomId || null, maxPlayers });
+        socket.emit('room-full', { roomId: roomId || null });
       } else {
         socket.emit('error', msg);
       }
@@ -148,43 +151,40 @@ io.on('connection', (socket) => {
   socket.on('create', ({ roomId, playerCount = 4, playerNames = [], maxPlayers = 4 } = {}) => {
     try {
       const normalized = normalizeRoomId(roomId);
-      const state = createGame(normalized || undefined, { playerCount, playerNames });
+      if (normalized && roomExists(normalized)) {
+        throw new Error('Room already exists');
+      }
+      const state = createGame(normalized || undefined, { playerCount, playerNames, maxPlayers });
       const id = state.roomId;
       socket.join(id);
-      // If the creator provided a player name in `playerNames`, `createGame` already
-      // created that player. Avoid adding a duplicate placeholder player. Otherwise
-      // add the creator as a player.
       const creatorName = (playerNames && playerNames.length > 0 && playerNames[0]) ? playerNames[0] : `Player-${socket.id.slice(0,4)}`;
 
       const finalizeWithPlayer = (player) => {
         const creatorId = player.id;
+        setRoomHost(id, creatorId);
         assignTokenForPlayer(id, creatorId).then((token) => {
-          // emit the latest state from storage (getState ensures a copy)
           const latest = getState(id);
           io.to(id).emit('state', latest);
-          socket.emit('created', { roomId: id, playerId: creatorId, token, maxPlayers });
+          socket.emit('created', { roomId: id, playerId: creatorId, token, maxPlayers: latest.maxPlayers });
         }).catch((err) => socket.emit('error', err.message));
       };
 
-      // Try to find an existing player with the creator name
       let creatorPlayer = null;
       if (playerNames && playerNames.length > 0) {
         creatorPlayer = state.players.find(p => String(p.name) === String(creatorName));
       }
 
       if (creatorPlayer) {
-        // player already exists from createGame
         finalizeWithPlayer(creatorPlayer);
       } else {
-        // create and add the creator player
         const newState = addPlayer(id, creatorName, maxPlayers);
         const added = newState.players[newState.players.length - 1];
         finalizeWithPlayer(added);
       }
     } catch (err) {
       const msg = err && err.message ? err.message : 'Unknown error';
-      if (msg === 'Room is full') {
-        socket.emit('room-full', { roomId: roomId || null, maxPlayers });
+      if (msg === 'Room already exists') {
+        socket.emit('error', msg);
       } else {
         socket.emit('error', msg);
       }

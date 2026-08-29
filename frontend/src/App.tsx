@@ -1,61 +1,50 @@
-// frontend/src/App.tsx
 import React, { useState } from 'react';
+import './index.css';
 import StartMenu from './components/StartMenu';
 import GameUI from './components/GameUI';
 
-type ViewState = 'startMenu' | 'game';
+type ViewState = 'start' | 'game';
+type GameMode = 'single' | 'multiplayer';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<ViewState>('startMenu');
-  const [playerName, setPlayerName] = useState('');
-  const [gameMode, setGameMode] = useState<'single' | 'multiplayer' | null>(null);
-  const [playerCount, setPlayerCount] = useState(2);
+  const [view, setView] = useState<ViewState>('start');
+  const [gameMode, setGameMode] = useState<GameMode>('single');
+  const [playerName, setPlayerName] = useState('Player');
+  const [roomSize, setRoomSize] = useState(2);
 
-  const handlePlayGame = () => {
-    // Load game settings and hide start menu
-    setView('game');
+  const handleStartSingle = () => {
     setGameMode('single');
-    // Initialize your game here
-  };
-
-  const handleSettings = () => {
-    // Navigate to settings page or show settings modal
-    console.log('Opening settings');
-  };
-
-  const handleMultiplayer = (count: number) => {
-    // Navigate to multiplayer page
     setView('game');
+  };
+
+  const handleStartMultiplayer = () => {
     setGameMode('multiplayer');
-    setPlayerCount(count);
-    console.log('Opening multiplayer mode with', count, 'players');
+    setView('game');
   };
 
-  const handleLeaderboard = () => {
-    // Navigate to leaderboard page
-    console.log('Opening leaderboard');
-  };
-
-  const handleBackToMenu = () => {
-    setView('startMenu');
-    setGameMode(null);
-    setPlayerCount(2);
+  const handleBack = () => {
+    setView('start');
   };
 
   return (
     <div className="app">
-      {view === 'startMenu' && (
+      {view === 'start' ? (
         <StartMenu
-          onPlayGame={handlePlayGame}
-          onSettings={handleSettings}
-          onMultiplayer={handleMultiplayer}
-          onLeaderboard={handleLeaderboard}
           playerName={playerName}
           setPlayerName={setPlayerName}
+          roomSize={roomSize}
+          setRoomSize={setRoomSize}
+          onStartSingle={handleStartSingle}
+          onStartMultiplayer={handleStartMultiplayer}
+        />
+      ) : (
+        <GameUI
+          gameMode={gameMode}
+          playerName={playerName}
+          roomSize={roomSize}
+          onBack={handleBack}
         />
       )}
-      
-      {view === 'game' && <GameUI gameMode={gameMode} playerCount={playerCount} onBack={handleBackToMenu} />}
     </div>
   );
 };

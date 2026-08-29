@@ -24,6 +24,8 @@ function createEmptyState(roomId) {
     players: [],
     activePlayerIndex: 0,
     turnCount: 0,
+    maxPlayers: 4,
+    hostId: null,
     deck: [],
     discardPile: [],
     melds: [],
@@ -129,13 +131,25 @@ export function getState(roomId = 'local-game') {
   return JSON.parse(JSON.stringify(state));
 }
 
+export function roomExists(roomId) {
+  return Boolean(games[roomId]);
+}
+
+export function setRoomHost(roomId = 'local-game', hostId) {
+  const state = ensureRoom(roomId);
+  state.hostId = hostId;
+  persistState(roomId);
+  return getState(roomId);
+}
+
 export function resetGame(roomId = 'local-game') {
   games[roomId] = createEmptyState(roomId);
   persistState(roomId);
 }
 
-export function createGame(roomId = 'local-game', { playerCount = 4, playerNames = [] } = {}) {
+export function createGame(roomId = 'local-game', { playerCount = 4, playerNames = [], maxPlayers = 4 } = {}) {
   const state = createEmptyState(roomId);
+  state.maxPlayers = Number(maxPlayers) || Number(playerCount) || 4;
   // Only create real players for provided names. Do not prefill with bot/placeholder players.
   if (Array.isArray(playerNames) && playerNames.length > 0) {
     for (let i = 0; i < playerNames.length; i += 1) {
@@ -155,11 +169,13 @@ export function createGame(roomId = 'local-game', { playerCount = 4, playerNames
   return getState(state.roomId);
 }
 
-export function addPlayer(roomId = 'local-game', playerName = 'Player', maxPlayers = 4) {
+export function addPlayer(roomId = 'local-game', playerName = 'Player', maxPlayers) {
   const state = ensureRoom(roomId);
-  // Check if max players reached
+  const roomLimit = Number(maxPlayers || state.maxPlayers || 4);
+  // Keep room capacity in sync
+  state.maxPlayers = roomLimit;
   const activePlayers = state.players.filter(p => p.status !== 'eliminated');
-  if (activePlayers.length >= maxPlayers) {
+  if (activePlayers.length >= roomLimit) {
     throw new Error('Room is full');
   }
   const id = `${state.players.length + 1}`;
