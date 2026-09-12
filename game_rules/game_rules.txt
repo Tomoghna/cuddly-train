@@ -1,0 +1,53 @@
+>> Players:
+    => there can be minimum of 2 players and a maximum of 4 players per table or room or game.
+    
+    => after the cards are dealt... any random player can start... so the first one to play has 2 option...
+        a. either pick a card from the deck and discard one card from his hand into the table...
+        b. at the starting the players has a stack (minimum 3 cards of same suite or same number)... he can throw the stack.... (incase the game is played in blind joker mode then only playing a stack you can see the joker... without playing a stack a player cannot know joker.)
+
+    => in each players turn they must pick a card from the deck or pick a card from the discarded pile of cards from the previous players and discard a card from their own hand into the pile...
+
+    => if a player picks a card he cannot discard a stack... he has to discard a card... if he discards a stack he cannot pick a card...
+
+>> Deck:
+    => after the cards are given to the players (8 cards each).. the bottom most cards next suite is the joker... for example there is 8 of club at the bottom so the joker is 9 of any suite(this is in case of blind joker) if it was seen joker then at the last dealer will show the bottom most card and every one will know the joker... (4 jokers per game).. 
+
+
+
+
+>> Player Hands:
+    => each players are given 8 cards during the start.
+    
+    => each player must have to play a stack to discard all of his hand...
+
+    => each player can either play maximum of two stacks...
+
+    => suppose a player plays 2 stacks of 3 cards and are left with 2 cards... so the remaning cards cannot be stacked... because minimum three cards required to create a stack... so the remaining cards can be inserted into existing stacks played by the players..
+
+
+
+
+>> Stack: 
+    => a stack can be of minimum 3 cards...
+    
+    => a stack can be made of either same suite of different numbers or different suite same numbers....
+
+    => Sequence of cards: A 2 3 4 5 6 7 8 9 10 J Q K A
+
+    => if a player has played a stack for example (2 3 4) of same suite.... another player or the same player can insert into the stack afterwards... but if a player has played a stack for example (4 4 4 4) the stack is complete. no players can insert into that stack any more..
+
+
+
+>> Winner:
+    => the player who can discard all of his cards in his hand at first is the winner....
+
+
+
+>> Joker:
+    => Joker is the substitute of all the cards... we can play it as substitute of any cards to create a stack or discard.
+
+    => for example: 9 JOKER J, A 2 JOKER, 4 4 JOKER...
+
+
+>> Turn Logic:
+    => in each players turn a player can either pick a card from the deck or from the discarded pile, and discard a card from his hand... or throw a stack and see the joker(no one else sees it). after that next players turn...
