@@ -1,0 +1,28 @@
+1. Landing Page:
+    ->Multiplayer:
+        [New Game]
+        [Join Game]
+    ->Singleplayer:
+        [Play game]
+
+2. New Game:
+    [choose number of players]
+    [seen joker or blind joker]
+
+    [create room/start game]
+
+
+3. Join Game:
+    [enter room id]
+    [start game]
+
+
+4. Game Table:
+    typically like other cards game...
+    => each player can click the deck to pick a card... or click the pile to pick from there...
+    => players can drag their cards in their hands to sort them...
+    => players can select 3 or more cards to play a stack
+
+
+5. Winner:
+    1 2 3 is shown
