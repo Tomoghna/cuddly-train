@@ -19,7 +19,21 @@ import {
   Users,
   Zap,
 } from 'lucide-react'
-import { isValidStack, rankAfter, ranks, suits } from './gameRules.js'
+import {
+  advanceTurnIndex,
+  canDiscardThisTurn,
+  canExtendStack,
+  canOpenNewStackForPlayer,
+  canPlayerAct,
+  canPlayStackThisTurn,
+  getJokerDisplay,
+  getJokerLabel,
+  getStandings,
+  getTurnMessage,
+  isValidStack,
+  ranks,
+  suits,
+} from './gameRules.js'
 import './App.css'
 
 const palette = ['mint', 'violet', 'amber', 'rose']
@@ -82,7 +96,7 @@ function createGameState(playerCount, jokerMode = 'seen', options = {}) {
 
   const discard = [deck.pop() ?? { id: 'starter', rank: 'A', suit: '♠', color: 'black', isJoker: false }]
   const jokerReference = discard[0]
-  const jokerLabel = `${rankAfter(jokerReference.rank)}${jokerReference.suit}`
+  const jokerLabel = getJokerLabel(jokerReference)
 
   return {
     room: options.room || 'NOVA-4821',
@@ -94,6 +108,7 @@ function createGameState(playerCount, jokerMode = 'seen', options = {}) {
     discard,
     activeIndex: 0,
     phase: 'draw',
+    hasDrawnThisTurn: false,
     stacks: [],
     winner: null,
     isSinglePlayer: Boolean(options.isSinglePlayer),
@@ -104,6 +119,7 @@ function App() {
   const [screen, setScreen] = useState('landing')
   const [playerCount, setPlayerCount] = useState(4)
   const [singlePlayerCount, setSinglePlayerCount] = useState(2)
+  const [singlePlayerJokerMode, setSinglePlayerJokerMode] = useState('blind')
   const [jokerMode, setJokerMode] = useState('seen')
   const [playerId] = useState(() => `player-${crypto.randomUUID().slice(0, 8)}`)
   const [roomCode, setRoomCode] = useState(() => new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase() || 'NOVA-4821')
@@ -118,8 +134,12 @@ function App() {
   const currentPlayer = game?.players[game.activeIndex]
   const currentHand = currentPlayer?.hand ?? []
   const isMyTurn = serverState.activePlayerId === playerId || (!serverState.activePlayerId && !(game?.isSinglePlayer && currentPlayer?.isAI))
-  const canActThisTurn = isMyTurn && game?.phase === 'play'
+  const canActThisTurn = Boolean(game && currentPlayer && canPlayerAct(game, playerId)) || (isMyTurn && game?.phase === 'play')
   const canDrawThisTurn = isMyTurn && game?.phase === 'draw'
+  const canPlayStack = game ? canPlayStackThisTurn(game) && isMyTurn : false
+  const canDiscard = game ? canDiscardThisTurn(game) && isMyTurn : false
+  const canOpenStack = game && currentPlayer ? canOpenNewStackForPlayer(game.stacks, currentPlayer.id) : false
+  const turnMessage = getTurnMessage(game ?? { phase: 'draw', hasDrawnThisTurn: false })
 
   const findBestAiStack = useCallback((hand) => {
     if (!Array.isArray(hand) || hand.length < 3) return null
@@ -272,9 +292,18 @@ function App() {
     )
   }
 
+  const findStackToExtend = (stackCards) => {
+    if (!game || !Array.isArray(stackCards) || stackCards.length === 0) return null
+    return game.stacks.find((stack) => Array.isArray(stack.cards) && canExtendStack(stack.cards, stackCards)) ?? null
+  }
+
   const drawFromDeck = () => {
     if (!game || game.phase !== 'draw') {
       setToast('You need to draw before playing a stack.')
+      return
+    }
+    if (!canDrawThisTurn) {
+      setToast('It is not your turn to draw.')
       return
     }
     if (!sendAction('draw')) return
@@ -296,6 +325,7 @@ function App() {
         deck: nextDeck,
         players: updatedPlayers,
         phase: 'play',
+        hasDrawnThisTurn: true,
       }
     })
     setToast('Card drawn from the deck.')
@@ -304,6 +334,10 @@ function App() {
   const drawFromDiscard = () => {
     if (!game || game.phase !== 'draw') {
       setToast('You can only pick from the discard pile on your draw turn.')
+      return
+    }
+    if (!canDrawThisTurn) {
+      setToast('It is not your turn to draw.')
       return
     }
     if (!sendAction('draw')) return
@@ -322,6 +356,7 @@ function App() {
         players: updatedPlayers,
         discard: remainingDiscard,
         phase: 'play',
+        hasDrawnThisTurn: true,
       }
     })
     setToast('Card picked from the discard pile.')
@@ -330,6 +365,10 @@ function App() {
   const discardSelected = () => {
     if (!game || selectedCardIds.length !== 1) {
       setToast('Choose exactly one card to discard.')
+      return
+    }
+    if (!canDiscard) {
+      setToast('You must draw before you can discard this turn.')
       return
     }
 
@@ -346,7 +385,7 @@ function App() {
       const nextPlayers = current.players.map((player, index) =>
         index === current.activeIndex ? { ...player, hand: remainingHand } : player,
       )
-      const nextIndex = (current.activeIndex + 1) % nextPlayers.length
+      const nextIndex = advanceTurnIndex(nextPlayers.length, current.activeIndex)
       const winner = remainingHand.length === 0 ? active.name : null
 
       return {
@@ -355,6 +394,7 @@ function App() {
         discard: [selectedCard, ...current.discard],
         activeIndex: winner ? current.activeIndex : nextIndex,
         phase: 'draw',
+        hasDrawnThisTurn: false,
         winner,
       }
     })
@@ -369,7 +409,17 @@ function App() {
   }
 
   const playSelectedStack = () => {
-    if (!game || selectedCardIds.length < 3) {
+    if (!game || !canPlayStackThisTurn(game)) {
+      setToast('You must draw first, then discard a card before playing a stack.')
+      return
+    }
+
+    if (!canActThisTurn) {
+      setToast('You can only play stacks on your turn.')
+      return
+    }
+
+    if (selectedCardIds.length < 3) {
       setToast('Select at least 3 cards to make a stack.')
       return
     }
@@ -380,6 +430,18 @@ function App() {
       setToast('Stacks must be 3+ cards in sequence or same rank.')
       return
     }
+
+    const existingStack = findStackToExtend(stackCards)
+    if (!existingStack && !canOpenNewStackForPlayer(game.stacks, currentPlayer.id)) {
+      setToast('You can only open up to 2 stacks in a round.')
+      return
+    }
+
+    if (existingStack && !canExtendStack(existingStack.cards, stackCards)) {
+      setToast('Those cards do not correctly extend the selected stack.')
+      return
+    }
+
     if (!sendAction('play_stack', { cardIds: selectedCardIds, cards: stackCards })) return
 
     const remainingHand = handSnapshot.filter((card) => !selectedCardIds.includes(card.id))
@@ -392,12 +454,17 @@ function App() {
       )
       const winner = remainingHand.length === 0 ? active.name : null
 
+      const nextStacks = existingStack
+        ? current.stacks.map((stack) => stack === existingStack ? { ...stack, cards: [...stack.cards, ...stackCards] } : stack)
+        : [...current.stacks, { ownerId: active.id, cards: stackCards }]
+
       return {
         ...current,
         players: updatedPlayers,
-        stacks: [...current.stacks, stackCards],
-        activeIndex: winner ? current.activeIndex : (current.activeIndex + 1) % updatedPlayers.length,
+        stacks: nextStacks,
+        activeIndex: winner ? current.activeIndex : advanceTurnIndex(updatedPlayers.length, current.activeIndex),
         phase: 'draw',
+        hasDrawnThisTurn: false,
         winner,
       }
     })
@@ -406,6 +473,8 @@ function App() {
     if (remainingHand.length === 0) {
       setScreen('winner')
       setToast('Stack complete. You won the round!')
+    } else if (existingStack) {
+      setToast('Cards added to the table stack.')
     } else {
       setToast('Stack played. Turn passed to the next player.')
     }
@@ -431,7 +500,7 @@ function App() {
   }
 
   const startSinglePlayer = (countOverride = singlePlayerCount) => {
-    const seatedGame = createGameState(countOverride, 'blind', {
+    const seatedGame = createGameState(countOverride, singlePlayerJokerMode, {
       room: 'SOLO-001',
       playerId,
       isSinglePlayer: true,
@@ -472,6 +541,33 @@ function App() {
             deck: nextDeck,
             discard: nextDiscard,
             phase: 'play',
+            hasDrawnThisTurn: true,
+          }
+        }
+
+        if (current.hasDrawnThisTurn) {
+          const discarded = active.hand[0]
+          if (!discarded) return current
+
+          const remainingHand = active.hand.filter((card) => card.id !== discarded.id)
+          nextPlayers[current.activeIndex] = {
+            ...active,
+            hand: remainingHand,
+          }
+          nextDiscard.unshift(discarded)
+
+          if (remainingHand.length === 0) {
+            setScreen('winner')
+          }
+
+          return {
+            ...current,
+            players: nextPlayers,
+            discard: nextDiscard,
+            activeIndex: remainingHand.length === 0 ? current.activeIndex : advanceTurnIndex(nextPlayers.length, current.activeIndex),
+            phase: 'draw',
+            hasDrawnThisTurn: false,
+            winner: remainingHand.length === 0 ? active.name : null,
           }
         }
 
@@ -482,7 +578,7 @@ function App() {
             ...active,
             hand: remainingHand,
           }
-          nextStacks.push(stackChoice)
+          nextStacks.push({ ownerId: active.id, cards: stackChoice })
 
           if (remainingHand.length === 0) {
             setScreen('winner')
@@ -492,8 +588,9 @@ function App() {
             ...current,
             players: nextPlayers,
             stacks: nextStacks,
-            activeIndex: remainingHand.length === 0 ? current.activeIndex : (current.activeIndex + 1) % nextPlayers.length,
+            activeIndex: remainingHand.length === 0 ? current.activeIndex : advanceTurnIndex(nextPlayers.length, current.activeIndex),
             phase: 'draw',
+            hasDrawnThisTurn: false,
             winner: remainingHand.length === 0 ? active.name : null,
           }
         }
@@ -516,8 +613,9 @@ function App() {
           ...current,
           players: nextPlayers,
           discard: nextDiscard,
-          activeIndex: remainingHand.length === 0 ? current.activeIndex : (current.activeIndex + 1) % nextPlayers.length,
+          activeIndex: remainingHand.length === 0 ? current.activeIndex : advanceTurnIndex(nextPlayers.length, current.activeIndex),
           phase: 'draw',
+          hasDrawnThisTurn: false,
           winner: remainingHand.length === 0 ? active.name : null,
         }
       })
@@ -526,7 +624,17 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [findBestAiStack, game, screen])
 
-  const standings = game ? [...game.players].sort((left, right) => left.hand.length - right.hand.length) : []
+  const standings = game ? getStandings(game.players) : []
+  const activePlayer = game?.players?.[game.activeIndex] ?? null
+  const tableStatusText = game?.winner
+    ? `${game.winner} won the round`
+    : activePlayer && activePlayer.id === playerId
+      ? game?.phase === 'draw'
+        ? 'Draw a card to start your turn.'
+        : 'You can discard or build a stack.'
+      : activePlayer
+        ? `${activePlayer.name} is taking their turn.`
+        : 'Waiting for the next move.'
 
   return (
     <main className="app-shell">
@@ -560,6 +668,13 @@ function App() {
                     <option value={2}>2 players</option>
                     <option value={3}>3 players</option>
                     <option value={4}>4 players</option>
+                  </select>
+                </label>
+                <label className="field full-width compact-field">
+                  <span>Joker</span>
+                  <select value={singlePlayerJokerMode} onChange={(event) => setSinglePlayerJokerMode(event.target.value)}>
+                    <option value="seen">Seen joker</option>
+                    <option value="blind">Blind joker</option>
                   </select>
                 </label>
                 <button className="primary-button accent" onClick={() => startSinglePlayer(singlePlayerCount)}>
@@ -867,7 +982,7 @@ function App() {
 
                 <div className="score-meta">
                   <span>
-                    <Eye size={15} /> Joker <b>{game.jokerLabel}</b>
+                    <Eye size={15} /> Joker <b>{getJokerDisplay(game.jokerMode, { rank: game.discard[0]?.rank ?? 'A', suit: game.discard[0]?.suit ?? '♠' })}</b>
                   </span>
                   <span>
                     <RefreshCw size={14} /> {game.phase === 'draw' ? 'Draw phase' : 'Play phase'}
@@ -879,9 +994,14 @@ function App() {
                 <section className="game-board panel">
                   <div className="board-topline">
                     <span className="turn-indicator">
-                      <span className="status-dot live" /> {isMyTurn ? 'Your turn' : 'Waiting for turn'}
+                      <span className="status-dot live" /> {game?.winner ? 'Round complete' : isMyTurn ? 'Your turn' : 'Waiting for turn'}
                     </span>
-                    <span className="turn-time">{game.phase === 'draw' ? 'Draw a card' : 'Build or discard a stack'}</span>
+                    <span className="turn-time">{game?.winner ? `${game.winner} is the winner` : turnMessage}</span>
+                  </div>
+
+                  <div className="table-status-banner" aria-live="polite">
+                    <strong>{game?.winner ? 'Winner' : 'Turn status'}</strong>
+                    <span>{tableStatusText}</span>
                   </div>
 
                   <div className="table-surface">
@@ -918,7 +1038,7 @@ function App() {
                   <div className="board-footer">
                     <button className="secondary-button" onClick={drawFromDiscard} disabled={!canDrawThisTurn}>Pick discard</button>
                     <button className="secondary-button" onClick={sortHand}>Sort hand</button>
-                    <button className="primary-button small" onClick={playSelectedStack} disabled={!canActThisTurn || selectedCardIds.length < 3}>Play stack</button>
+                    <button className="primary-button small" onClick={playSelectedStack} disabled={!canPlayStack || selectedCardIds.length < 3}>Play stack</button>
                   </div>
                 </section>
 
@@ -935,8 +1055,9 @@ function App() {
                     ) : (
                       <div className="stack-list">
                         {game.stacks.map((stack, stackIndex) => (
-                          <div className="stack-pill" key={`${stackIndex}-${stack.map((card) => card.id).join('-')}`}>
-                            {stack.map((card) => `${card.rank}${card.suit}`).join(' · ')}
+                          <div className="stack-pill" key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`}>
+                            <span className="stack-owner">{stack.ownerId === playerId ? 'You' : game.players.find((player) => player.id === stack.ownerId)?.name ?? 'Table'}</span>
+                            <span className="stack-cards">{stack.cards.map((card) => `${card.rank}${card.suit}`).join(' · ')}</span>
                           </div>
                         ))}
                       </div>
@@ -966,7 +1087,7 @@ function App() {
 
                     <div className="hand-actions">
                       <button className="secondary-button" onClick={() => setSelectedCardIds([])}>Clear</button>
-                      <button className="primary-button small" onClick={discardSelected} disabled={!canActThisTurn || selectedCardIds.length !== 1}>Discard selection</button>
+                      <button className="primary-button small" onClick={discardSelected} disabled={!canDiscard || selectedCardIds.length !== 1}>Discard selection</button>
                     </div>
                   </div>
                 </aside>
