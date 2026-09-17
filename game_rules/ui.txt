@@ -4,6 +4,7 @@
         [Join Game]
     ->Singleplayer:
         [Play game]
+        ## make it a 2-4 selectable player table with only the user as the real player and rest of them computer... also add option for blind joker and seen joker.
 
 2. New Game:
     [choose number of players]

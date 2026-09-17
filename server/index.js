@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
+import { isValidStack } from '../src/gameRules.js'
 
 const rooms = new Map()
 const port = Number(process.env.PORT || 3001)
@@ -11,7 +12,16 @@ const server = createServer((request, response) => {
 const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 })
 
 function newRoom(id) {
-  const room = { id, clients: new Map(), scores: {}, turn: 0, activePlayerId: null, phase: 'draw', deck: [] }
+  const room = {
+    id,
+    clients: new Map(),
+    scores: {},
+    turn: 0,
+    activePlayerId: null,
+    phase: 'draw',
+    deck: [],
+    players: [],
+  }
   rooms.set(id, room)
   return room
 }
@@ -56,8 +66,14 @@ wss.on('connection', (socket) => {
       }
       playerId = message.playerId || randomUUID()
       room.clients.set(playerId, socket)
+      room.players = [...room.clients.keys()].map((clientId, index) => ({
+        id: clientId,
+        name: index === 0 ? 'You' : `Player ${index + 1}`,
+        initials: index === 0 ? 'AL' : `P${index + 1}`,
+        color: ['mint', 'violet', 'amber', 'rose'][index % 4],
+      }))
       if (!room.activePlayerId) room.activePlayerId = playerId
-      publish(room, { type: 'room_state', roomId: room.id, playerCount: room.clients.size, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores })
+      publish(room, { type: 'room_state', roomId: room.id, playerCount: room.clients.size, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores, players: room.players })
       return
     }
     if (!room) { reject(socket, 'JOIN_REQUIRED', 'Join a room first'); return }
@@ -76,8 +92,13 @@ wss.on('connection', (socket) => {
       }
       if (message.type === 'play_stack') {
         const cardIds = message.payload?.cardIds
+        const stackCards = Array.isArray(message.payload?.cards) ? message.payload.cards : []
         if (!Array.isArray(cardIds) || cardIds.length < 3 || new Set(cardIds).size !== cardIds.length) {
           reject(socket, 'INVALID_STACK', 'A stack needs at least 3 unique cards')
+          return
+        }
+        if (!isValidStack(stackCards) || stackCards.length !== cardIds.length) {
+          reject(socket, 'INVALID_STACK', 'That stack does not follow the FISS rules.')
           return
         }
       }
@@ -95,12 +116,18 @@ wss.on('connection', (socket) => {
         room.activePlayerId = playerIds[room.turn] || playerId
         room.phase = 'draw'
       }
-      publish(room, { type: 'game_action', action: message.type, playerId, payload: message.payload || null, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores })
+      room.players = [...room.clients.keys()].map((clientId, index) => ({
+        id: clientId,
+        name: index === 0 ? 'You' : `Player ${index + 1}`,
+        initials: index === 0 ? 'AL' : `P${index + 1}`,
+        color: ['mint', 'violet', 'amber', 'rose'][index % 4],
+      }))
+      publish(room, { type: 'game_action', action: message.type, playerId, payload: message.payload || null, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores, players: room.players, roomId: room.id, playerCount: room.clients.size })
       return
     }
     reject(socket, 'UNKNOWN_ACTION', 'Unsupported game action')
   })
-  socket.on('close', () => { clearInterval(rateWindow); if (room && playerId) { room.clients.delete(playerId); if (room.activePlayerId === playerId) { room.activePlayerId = [...room.clients.keys()][0] || null; room.turn = 0; room.phase = 'draw' } if (room.clients.size === 0) rooms.delete(room.id); else publish(room, { type: 'room_state', roomId: room.id, playerCount: room.clients.size, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores }) } })
+  socket.on('close', () => { clearInterval(rateWindow); if (room && playerId) { room.clients.delete(playerId); room.players = [...room.clients.keys()].map((clientId, index) => ({ id: clientId, name: index === 0 ? 'You' : `Player ${index + 1}`, initials: index === 0 ? 'AL' : `P${index + 1}`, color: ['mint', 'violet', 'amber', 'rose'][index % 4] })); if (room.activePlayerId === playerId) { room.activePlayerId = [...room.clients.keys()][0] || null; room.turn = 0; room.phase = 'draw' } if (room.clients.size === 0) rooms.delete(room.id); else publish(room, { type: 'room_state', roomId: room.id, playerCount: room.clients.size, turn: room.turn, phase: room.phase, activePlayerId: room.activePlayerId, scores: room.scores, players: room.players }) } })
 })
 
 server.listen(port, () => console.log(`FISS realtime server listening on http://localhost:${port}`))
