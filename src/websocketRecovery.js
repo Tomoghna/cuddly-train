@@ -5,3 +5,9 @@ export function getReconnectDelay(attempt, random = Math.random) {
   const jitter = 0.8 + random() * 0.4
   return Math.min(maxDelay, Math.round(baseDelay * (2 ** exponent) * jitter))
 }
+
+export function getWebSocketUrl(location, configuredUrl) {
+  if (configuredUrl) return configuredUrl
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.hostname}:3001`
+}

@@ -12,6 +12,7 @@ npm run dev
 ```
 
 The client runs at `http://localhost:5173` and the realtime server runs at `http://localhost:3001`.
+The client connects to the current hostname on port `3001` by default. When the realtime server uses another address, set `VITE_WS_URL` to its WebSocket URL (for example, `wss://realtime.example.com`).
 
 Useful individual commands:
 

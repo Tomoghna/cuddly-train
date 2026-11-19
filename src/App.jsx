@@ -1,21 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Bell,
   Check,
-  ChevronDown,
-  CircleHelp,
   Copy,
   Crown,
-  Eye,
   Layers3,
-  MoreHorizontal,
   Play,
   Plus,
   RefreshCw,
   Send,
-  Settings,
-  ShieldCheck,
-  Sparkles,
   Users,
   Zap,
 } from 'lucide-react'
@@ -25,16 +17,14 @@ import {
   canExtendStack,
   canOpenNewStackForPlayer,
   canPlayerAct,
-  getJokerDisplay,
   getJokerLabel,
   getStandings,
-  getTurnMessage,
   findAiStackMove,
   isValidStack,
   ranks,
   suits,
 } from './gameRules.js'
-import { getReconnectDelay } from './websocketRecovery.js'
+import { getReconnectDelay, getWebSocketUrl } from './websocketRecovery.js'
 import './App.css'
 
 const palette = ['mint', 'violet', 'amber', 'rose']
@@ -102,6 +92,7 @@ function createGameState(playerCount, jokerMode = 'seen', options = {}) {
   return {
     room: options.room || 'NOVA-4821',
     playerCount: safePlayerCount,
+    maxPlayers: safePlayerCount,
     jokerMode,
     jokerLabel,
     players,
@@ -124,6 +115,7 @@ function App() {
   const [jokerMode, setJokerMode] = useState('seen')
   const [playerId] = useState(() => `player-${crypto.randomUUID().slice(0, 8)}`)
   const [roomCode, setRoomCode] = useState(() => new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase() || 'NOVA-4821')
+  const [roomCodeInput, setRoomCodeInput] = useState(roomCode)
   const [joinCode, setJoinCode] = useState('')
   const [game, setGame] = useState(() => createGameState(4, 'seen', { playerId }))
   const [selectedCardIds, setSelectedCardIds] = useState([])
@@ -134,9 +126,11 @@ function App() {
   const socketRef = useRef(null)
   const joinedRef = useRef(false)
   const retryNowRef = useRef(null)
+  const pendingRoomConfigurationRef = useRef(null)
 
   const currentPlayer = game?.players[game.activeIndex]
-  const currentHand = game?.players.find((player) => player.id === playerId)?.hand ?? []
+  const myPlayer = game?.players.find((player) => player.id === playerId)
+  const currentHand = myPlayer?.hand ?? []
   const isMyTurn = serverState.activePlayerId === playerId || (!serverState.activePlayerId && !(game?.isSinglePlayer && currentPlayer?.isAI))
   const canActThisTurn = Boolean(game && currentPlayer && canPlayerAct(game, playerId)) || (isMyTurn && game?.phase === 'play')
   const isConnected = connectionStatus === 'connected'
@@ -150,8 +144,6 @@ function App() {
     offline: 'Offline',
     error: 'Connection error',
   }[connectionStatus]
-  const turnMessage = getTurnMessage(game ?? { phase: 'draw', hasDrawnThisTurn: false })
-
   useEffect(() => {
     if (!toast) return undefined
     const timer = window.setTimeout(() => setToast(''), 2200)
@@ -207,6 +199,14 @@ function App() {
           retryCount = 0
           setReconnectAttempt(0)
           setConnectionStatus('connected')
+          const pendingConfiguration = pendingRoomConfigurationRef.current
+          if (pendingConfiguration?.roomId === message.roomId && socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: 'configure_room',
+              payload: pendingConfiguration.payload,
+            }))
+            pendingRoomConfigurationRef.current = null
+          }
           setServerState({
             playerCount: message.playerCount || 1,
             activePlayerId: message.activePlayerId || null,
@@ -233,6 +233,7 @@ function App() {
                 ...current,
                 room: message.roomId || current.room,
                 playerCount: message.playerCount || current.playerCount,
+                maxPlayers: message.maxPlayers || current.maxPlayers,
                 phase: message.phase || current.phase,
                 hasDrawnThisTurn: Boolean(message.hasDrawnThisTurn),
                 activeIndex: message.activePlayerId ? nextPlayers.findIndex((player) => player.id === message.activePlayerId) : current.activeIndex,
@@ -243,10 +244,15 @@ function App() {
                 winner: message.winner ?? null,
                 jokerMode: message.jokerMode || current.jokerMode,
                 jokerLabel: message.jokerLabel || current.jokerLabel,
+                started: Boolean(message.started),
                 isSinglePlayer: false,
               }
             })
-            if (message.winner) setScreen('winner')
+            if (message.winner) {
+              setScreen('winner')
+            } else if (message.started) {
+              setScreen((currentScreen) => currentScreen === 'lobby' ? 'table' : currentScreen)
+            }
           }
         }
 
@@ -273,7 +279,7 @@ function App() {
       setConnectionStatus(retryCount === 0 ? 'connecting' : 'reconnecting')
       joinedRef.current = false
       try {
-        socket = new WebSocket(import.meta.env.VITE_WS_URL || 'ws://localhost:3001')
+        socket = new WebSocket(getWebSocketUrl(window.location, import.meta.env.VITE_WS_URL))
       } catch {
         socketRef.current = null
         scheduleReconnect()
@@ -359,17 +365,26 @@ function App() {
   }
 
   const startGame = (countOverride = playerCount, modeOverride = jokerMode) => {
-    const nextGame = createGameState(countOverride, modeOverride)
-    nextGame.room = roomCode || 'NOVA-4821'
+    const nextRoomCode = (roomCodeInput || 'NOVA-4821').trim().toUpperCase().replace(/\s+/g, '-')
+    const configuration = { playerCount: countOverride, jokerMode: modeOverride }
+    const nextGame = createGameState(countOverride, modeOverride, { playerId })
+    nextGame.room = nextRoomCode
     setGame(nextGame)
     setSelectedCardIds([])
-    sendRoomControl('configure_room', { playerCount: countOverride, jokerMode: modeOverride })
+    setRoomCodeInput(nextRoomCode)
+    if (nextRoomCode === roomCode && joinedRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
+      if (sendRoomControl('configure_room', configuration)) {
+        pendingRoomConfigurationRef.current = null
+      }
+    } else {
+      pendingRoomConfigurationRef.current = { roomId: nextRoomCode, payload: configuration }
+      if (nextRoomCode !== roomCode) setRoomCode(nextRoomCode)
+    }
     setScreen('lobby')
   }
 
   const openTable = () => {
     sendRoomControl('start_game')
-    setScreen('table')
   }
 
   const copyRoomCode = async () => {
@@ -631,15 +646,6 @@ function App() {
 
   const standings = game ? getStandings(game.players) : []
   const activePlayer = game?.players?.[game.activeIndex] ?? null
-  const tableStatusText = game?.winner
-    ? `${game.winner} won the round`
-    : activePlayer && activePlayer.id === playerId
-      ? game?.phase === 'draw'
-        ? 'Draw a card to start your turn.'
-        : 'You can discard or build a stack.'
-      : activePlayer
-        ? `${activePlayer.name} is taking their turn.`
-        : 'Waiting for the next move.'
 
   return (
     <main className="app-shell">
@@ -723,7 +729,7 @@ function App() {
 
             <label className="field full-width">
               <span>Room name</span>
-              <input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="NOVA-4821" />
+              <input value={roomCodeInput} onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} placeholder="NOVA-4821" />
             </label>
 
             <button className="primary-button full" onClick={() => startGame(playerCount, jokerMode)}>
@@ -751,8 +757,9 @@ function App() {
 
             <button className="primary-button full" onClick={() => {
               const normalized = (joinCode || roomCode || 'NOVA-4821').trim().toUpperCase().replace(/\s+/g, '-')
+              setRoomCodeInput(normalized)
               setRoomCode(normalized)
-              const nextGame = createGameState(2, jokerMode)
+              const nextGame = createGameState(2, jokerMode, { playerId })
               nextGame.room = normalized
               setGame(nextGame)
               setScreen('lobby')
@@ -764,351 +771,151 @@ function App() {
       )}
 
       {screen === 'lobby' && game && (
-        <section className="table-shell">
-          <header className="topbar">
-            <div className="brand-mark">F</div>
-            <div className="brand-copy">
-              <strong>FISS</strong>
-              <small>PLAY TOGETHER</small>
-            </div>
-            <div className="topbar-divider" />
-            <div className="workspace-name">Workspace / <b>{game.room}</b> <ChevronDown size={14} /></div>
-            <div className="topbar-actions">
-              <div className="connection">
-                <span className={`status-dot ${isConnected ? 'live' : ''}`} /> {connectionLabel}
-                {!isConnected && (
-                  <button className="connection-retry" onClick={() => retryNowRef.current?.()}>
-                    <RefreshCw size={13} /> Retry
-                  </button>
-                )}
-              </div>
-              <button className="icon-button" aria-label="Notifications">
-                <Bell size={18} />
-              </button>
-              <button className="avatar avatar-small">AL</button>
+        <section className="lobby-screen">
+          <header className="game-header">
+            <button className="game-brand" onClick={() => setScreen('landing')} aria-label="Back to home">F</button>
+            <div className="game-room-title">{game.room}</div>
+            <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
+              <span className={`status-dot ${isConnected ? 'live' : ''}`} />
+              <span>{connectionLabel}</span>
+              {!isConnected && <button className="connection-retry" onClick={() => retryNowRef.current?.()} aria-label="Retry connection"><RefreshCw size={14} /></button>}
             </div>
           </header>
-
-          <div className="table-layout">
-            <aside className="sidebar">
-              <div className="side-label">GAME CONTROL</div>
-              <nav>
-                <button className="nav-item" onClick={openTable}>
-                  <Layers3 size={17} /> Game table
-                </button>
-                <button className="nav-item selected">
-                  <Users size={17} /> Room lobby
-                </button>
-                <button className="nav-item" onClick={() => setToast('Rules explained in the shared game guide.') }>
-                  <Sparkles size={17} /> Game rules
-                </button>
-              </nav>
-
-              <div className="side-label side-label-spaced">TABLE TOOLS</div>
-              <nav>
-                <button className="nav-item">
-                  <ShieldCheck size={17} /> Safe room
-                </button>
-                <button className="nav-item">
-                  <Settings size={17} /> Settings
-                </button>
-              </nav>
-
-              <div className="sidebar-bottom">
-                <div className="secure-note">
-                  <ShieldCheck size={15} />
-                  <span>
-                    <b>Private room</b>
-                    <small>Max 4 players</small>
-                  </span>
-                </div>
-                <button className="profile-row">
-                  <span className="avatar avatar-mint">AL</span>
-                  <span>
-                    <b>Alex Lee</b>
-                    <small>Table host</small>
-                  </span>
-                  <MoreHorizontal size={17} />
-                </button>
-              </div>
-            </aside>
-
-            <div className="board-area">
-              <div className="page-heading table-heading">
-                <div>
-                  <div className="eyebrow">ROOM LOBBY</div>
-                  <h1>{game.room}</h1>
-                  <p>Invite players, verify the table, and open the game when everyone is ready.</p>
-                </div>
-                <div className="heading-tools">
-                  <button className="ghost-button" onClick={copyRoomCode}>
-                    <Copy size={16} /> Copy room code
-                  </button>
-                  <button className="primary-button small" onClick={openTable}>
-                    <Play size={16} fill="currentColor" /> Open table
-                  </button>
-                </div>
-              </div>
-
-              <div className="lobby-grid">
-                <section className="panel room-panel">
-                  <div className="panel-heading">
-                    <div>
-                      <div className="eyebrow">INVITE PLAYERS</div>
-                      <h2>Share this room</h2>
-                    </div>
-                    <div className="live-pill"><span className="status-dot live" /> PRIVATE</div>
-                  </div>
-                  <div className="room-code-wrap">
-                    <span>{game.room}</span>
-                    <button onClick={copyRoomCode} aria-label="Copy room code"><Copy size={17} /></button>
-                  </div>
-                  <p className="helper">Anyone with this room code can join. The game cap is four players.</p>
-                  <div className="invite-field">
-                    <input placeholder="friend@company.com" />
-                    <button className="button button-dark"><Send size={15} /> Invite</button>
-                  </div>
-                </section>
-
-                <section className="panel players-panel">
-                  <div className="panel-heading">
-                    <div>
-                      <div className="eyebrow">PLAYERS</div>
-                      <h2>Ready check</h2>
-                    </div>
-                    <span className="player-count">{game.players.length} / 4</span>
-                  </div>
-                  {game.players.map((player) => (
-                    <div className="lobby-player" key={player.id}>
-                      <span className={`avatar avatar-${player.color}`}>{player.initials}</span>
-                      <span>
-                        <b>{player.name}</b>
-                        <small>{player.name === 'You' ? 'Host' : 'Ready to play'}</small>
-                      </span>
-                      {player.name === 'You' ? <Crown size={16} className="host-icon" /> : <span className="ready-label"><Check size={14} /> Ready</span>}
-                    </div>
-                  ))}
-                  <button className="primary-button full" onClick={openTable}><Zap size={16} /> Start game</button>
-                </section>
-              </div>
+          <section className="lobby-card">
+            <div className="lobby-heading">
+              <span className="eyebrow">TABLE READY</span>
+              <h1>Gather your crew</h1>
+              <p>Share the room code to invite players.</p>
             </div>
-          </div>
+            <button className="room-code-button" onClick={copyRoomCode}>
+              <span>{game.room}</span><Copy size={17} />
+            </button>
+            <div className="lobby-player-list">
+              {game.players.map((player) => (
+                <div className="lobby-player" key={player.id}>
+                  <span className={`avatar avatar-${player.color}`}>{player.initials}</span>
+                  <span className="lobby-player-name">{player.name}</span>
+                  {player.id === playerId && <Crown size={15} className="host-icon" />}
+                </div>
+              ))}
+              {Array.from({ length: Math.max(0, game.maxPlayers - game.players.length) }, (_, index) => (
+                <div className="lobby-seat" key={`empty-${index}`}><Users size={15} /> Waiting for player</div>
+              ))}
+            </div>
+            <button className="primary-button full lobby-start" onClick={openTable}>
+              <Play size={17} fill="currentColor" /> Deal in
+            </button>
+          </section>
         </section>
       )}
 
       {screen === 'table' && game && (
-        <section className="table-shell">
-          <header className="topbar">
-            <div className="brand-mark">F</div>
-            <div className="brand-copy">
-              <strong>FISS</strong>
-              <small>PLAY TOGETHER</small>
-            </div>
-            <div className="topbar-divider" />
-            <div className="workspace-name">Workspace / <b>{game.room}</b> <ChevronDown size={14} /></div>
-            <div className="topbar-actions">
-              <div className="connection">
-                <span className={`status-dot ${isConnected ? 'live' : ''}`} /> {connectionLabel}
-                {!isConnected && (
-                  <button className="connection-retry" onClick={() => retryNowRef.current?.()}>
-                    <RefreshCw size={13} /> Retry
-                  </button>
-                )}
-              </div>
-              <button className="icon-button" aria-label="Notifications">
-                <Bell size={18} />
-              </button>
-              <button className="avatar avatar-small">AL</button>
+        <section className="game-screen">
+          <header className="game-header">
+            <button className="game-brand" onClick={() => setScreen('lobby')} aria-label="Room lobby">F</button>
+            <div className="game-room-title">{game.room}</div>
+            <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
+              <span className={`status-dot ${isConnected ? 'live' : ''}`} />
+              <span>{connectionLabel}</span>
+              {!isConnected && <button className="connection-retry" onClick={() => retryNowRef.current?.()} aria-label="Retry connection"><RefreshCw size={14} /></button>}
             </div>
           </header>
 
-          <div className="table-layout">
-            <aside className="sidebar">
-              <div className="side-label">GAME CONTROL</div>
-              <nav>
-                <button className="nav-item selected">
-                  <Layers3 size={17} /> Game table
-                </button>
-                <button className="nav-item" onClick={() => setScreen('lobby')}>
-                  <Users size={17} /> Lobby
-                </button>
-                <button className="nav-item" onClick={() => setToast('Rules explained in the shared game guide.') }>
-                  <Sparkles size={17} /> Game rules
-                </button>
-              </nav>
-
-              <div className="side-label side-label-spaced">TABLE TOOLS</div>
-              <nav>
-                <button className="nav-item">
-                  <ShieldCheck size={17} /> Safe room
-                </button>
-                <button className="nav-item">
-                  <Settings size={17} /> Settings
-                </button>
-              </nav>
-
-              <div className="sidebar-bottom">
-                <div className="secure-note">
-                  <ShieldCheck size={15} />
-                  <span>
-                    <b>Private room</b>
-                    <small>Max 4 players</small>
+          <section className="game-table">
+            <div className="opponent-row">
+              {game.players.filter((player) => player.id !== playerId).map((player) => (
+                <div key={player.id} className={`opponent-seat ${player.id === game.players[game.activeIndex]?.id ? 'active' : ''}`}>
+                  <span className={`avatar avatar-${player.color}`}>{player.initials}</span>
+                  <span className="opponent-info">
+                    <b>{player.name}</b>
+                    <small><span className="mini-card-back" /> × {player.hand.length}</small>
                   </span>
+                  {player.id === game.players[game.activeIndex]?.id && <span className="seat-turn">TURN</span>}
                 </div>
-                <button className="profile-row">
-                  <span className="avatar avatar-mint">AL</span>
-                  <span>
-                    <b>Alex Lee</b>
-                    <small>Table host</small>
-                  </span>
-                  <MoreHorizontal size={17} />
-                </button>
+              ))}
+            </div>
+
+            <div className="felt-table">
+              <div className="felt-glow" />
+              <div className={`turn-badge ${isMyTurn ? 'my-turn' : ''}`} aria-live="polite">
+                <span className="turn-pulse" />
+                {game.winner ? `${game.winner} wins!` : isMyTurn ? (game.phase === 'draw' ? 'Your turn · draw a card' : 'Your turn · make a play') : `${activePlayer?.name ?? 'Player'} is playing`}
               </div>
-            </aside>
 
-            <div className="board-area">
-              <div className="page-heading table-heading">
-                <div>
-                  <div className="eyebrow">LIVE TABLE</div>
-                  <h1>{game.room}</h1>
-                  <p>Make your move. You are playing clockwise.</p>
-                </div>
-                <div className="heading-tools">
-                  <button className="ghost-button">
-                    <CircleHelp size={16} /> Rules
+              <div className="table-piles">
+                <div className="pile-group">
+                  <button className={`deck-stack ${canDrawThisTurn ? 'draw-ready' : ''}`} onClick={drawFromDeck} aria-label={`Draw from deck, ${game.deck.length} cards`} disabled={!canDrawThisTurn}>
+                    <span /><span /><span className="playing-card back-card"><Layers3 size={24} /></span>
                   </button>
-                  <button className="ghost-button icon-only">
-                    <MoreHorizontal size={17} />
-                  </button>
+                  <span className="pile-count">{game.deck.length} in deck</span>
                 </div>
+                <div className="pile-divider" />
+                <button className={`discard-pile ${canDrawThisTurn ? 'draw-ready' : ''}`} onClick={drawFromDiscard} aria-label="Draw from discard pile" disabled={!canDrawThisTurn || game.discard.length === 0}>
+                  <span className={`playing-card discard-card ${game.discard[0]?.color === 'red' ? 'red-card' : ''}`}>
+                    <span className="playing-card-corner">{game.discard[0]?.rank ?? 'A'}<small>{game.discard[0]?.suit ?? '♠'}</small></span>
+                    <span className="card-center-suit">{game.discard[0]?.suit ?? '♠'}</span>
+                    <span className="playing-card-corner corner-bottom">{game.discard[0]?.rank ?? 'A'}<small>{game.discard[0]?.suit ?? '♠'}</small></span>
+                  </span>
+                  <span className="pile-count">Discard</span>
+                </button>
               </div>
 
-              <div className="score-strip">
-                {game.players.map((player, index) => (
-                  <div key={player.id} className={`score-player ${index === game.activeIndex ? 'is-you' : ''}`}>
-                    <span className={`avatar avatar-${player.color}`}>{player.initials}</span>
-                    <div>
-                      <b>{player.name}</b>
-                      <small>{player.hand.length} cards</small>
-                    </div>
-                    {index === game.activeIndex && <span className="turn-chip">TURN</span>}
-                  </div>
-                ))}
-
-                <div className="score-meta">
-                  <span>
-                    <Eye size={15} /> Joker <b>{getJokerDisplay(game.jokerMode, { rank: game.discard[0]?.rank ?? 'A', suit: game.discard[0]?.suit ?? '♠' })}</b>
-                  </span>
-                  <span>
-                    <RefreshCw size={14} /> {game.phase === 'draw' ? 'Draw phase' : 'Play phase'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="game-layout">
-                <section className="game-board panel">
-                  <div className="board-topline">
-                    <span className="turn-indicator">
-                      <span className="status-dot live" /> {game?.winner ? 'Round complete' : isMyTurn ? 'Your turn' : 'Waiting for turn'}
-                    </span>
-                    <span className="turn-time">{game?.winner ? `${game.winner} is the winner` : turnMessage}</span>
-                  </div>
-
-                  <div className="table-status-banner" aria-live="polite">
-                    <strong>{game?.winner ? 'Winner' : 'Turn status'}</strong>
-                    <span>{tableStatusText}</span>
-                  </div>
-
-                  <div className="table-surface">
-                    {game.players.slice(1).map((player, index) => (
-                      <div key={player.id} className={`opponent opponent-${index === 0 ? 'top' : index === 1 ? 'left' : 'right'}`}>
-                        <div className="avatar-label">
-                          <span className={`avatar avatar-${player.color}`}>{player.initials}</span>
-                          <b>{player.name}</b>
-                        </div>
-                        <span className="opponent-cards">{player.hand.length} cards</span>
-                      </div>
-                    ))}
-
-                    <div className="deck-zone">
-                      <button className="deck-stack" onClick={drawFromDeck} aria-label="Draw from deck" disabled={!canDrawThisTurn}>
-                        <span />
-                        <span />
-                        <span className="playing-card back-card"><Layers3 size={23} /></span>
-                      </button>
-                      <small>{game.deck.length} cards</small>
-                    </div>
-
-                    <div className="discard-zone">
-                      <div className="playing-card discard-card">
-                        <span className="card-rank">{game.discard[0]?.rank ?? 'A'}</span>
-                        <span className={`card-suit ${game.discard[0]?.color === 'red' ? 'red' : ''}`}>
-                          {game.discard[0]?.suit ?? '♠'}
-                        </span>
-                      </div>
-                      <small>Discard pile</small>
-                    </div>
-                  </div>
-
-                  <div className="board-footer">
-                    <button className="secondary-button" onClick={drawFromDiscard} disabled={!canDrawThisTurn}>Pick discard</button>
-                    <button className="secondary-button" onClick={sortHand}>Sort hand</button>
-                    <button className="primary-button small" onClick={playSelectedStack} disabled={!canPlayStack || selectedCardIds.length < 3}>Play stack</button>
-                  </div>
-                </section>
-
-                <aside className="side-panel">
-                  <div className="panel activity-panel">
-                    <div className="panel-heading">
-                      <div>
-                        <div className="eyebrow">ACTIVE STACKS</div>
-                        <h2>Table</h2>
-                      </div>
-                    </div>
-                    {game.stacks.length === 0 ? (
-                      <p className="helper">No stacks yet. Select 3 or more cards to start one.</p>
-                    ) : (
-                      <div className="stack-list">
-                        {game.stacks.map((stack, stackIndex) => (
-                          <div className="stack-pill" key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`}>
-                            <span className="stack-owner">{stack.ownerId === playerId ? 'You' : game.players.find((player) => player.id === stack.ownerId)?.name ?? 'Table'}</span>
-                            <span className="stack-cards">{stack.cards.map((card) => `${card.rank}${card.suit}`).join(' · ')}</span>
-                          </div>
+              {game.stacks.length > 0 && (
+                <div className="table-stacks" aria-label="Played stacks">
+                  {game.stacks.map((stack, stackIndex) => (
+                    <div className="table-stack" key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`}>
+                      <span className="stack-owner">{stack.ownerId === playerId ? 'YOU' : game.players.find((player) => player.id === stack.ownerId)?.name ?? 'TABLE'}</span>
+                      <div className="stack-mini-cards">
+                        {stack.cards.map((card) => (
+                          <span className={`stack-mini-card ${card.color === 'red' ? 'red-card' : ''}`} key={card.id}>
+                            {card.rank}<small>{card.suit}</small>
+                          </span>
                         ))}
                       </div>
-                    )}
-                  </div>
-
-                  <div className="panel activity-panel">
-                    <div className="panel-heading">
-                      <div>
-                        <div className="eyebrow">YOUR HAND</div>
-                        <h2>{currentHand.length} cards</h2>
-                      </div>
                     </div>
-                    <div className="hand-grid">
-                      {currentHand.map((card) => (
-                        <button
-                          key={card.id}
-                          className={`hand-card ${selectedCardIds.includes(card.id) ? 'selected' : ''}`}
-                          onClick={() => toggleCardSelection(card.id)}
-                          type="button"
-                        >
-                          <span className="card-rank">{card.rank}</span>
-                          <span className={`card-suit ${card.color === 'red' ? 'red' : ''}`}>{card.suit}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="hand-actions">
-                      <button className="secondary-button" onClick={() => setSelectedCardIds([])}>Clear</button>
-                      <button className="primary-button small" onClick={discardSelected} disabled={!canDiscard || selectedCardIds.length !== 1}>Discard selection</button>
-                    </div>
-                  </div>
-                </aside>
-              </div>
+                  ))}
+                </div>
+              )}
+              <div className="felt-ornament" aria-hidden="true">F</div>
             </div>
-          </div>
+
+            <section className="player-hand" aria-label="Your hand">
+              <div className="hand-heading">
+                <div className="you-label"><span className={`avatar avatar-${myPlayer?.color ?? 'mint'}`}>{myPlayer?.initials ?? 'YOU'}</span><b>Your hand</b><span className="hand-count">{currentHand.length}</span></div>
+                <button className="sort-button" onClick={sortHand}>Sort</button>
+              </div>
+              <div className="hand-scroll">
+                {currentHand.map((card, index) => (
+                  <button
+                    key={card.id}
+                    className={`hand-card ${card.color === 'red' ? 'red-card' : ''} ${selectedCardIds.includes(card.id) ? 'selected' : ''}`}
+                    style={{ '--card-index': index }}
+                    onClick={() => toggleCardSelection(card.id)}
+                    aria-pressed={selectedCardIds.includes(card.id)}
+                    type="button"
+                  >
+                    <span className="playing-card-corner">{card.rank}<small>{card.suit}</small></span>
+                    <span className="card-center-suit">{card.suit}</span>
+                    <span className="playing-card-corner corner-bottom">{card.rank}<small>{card.suit}</small></span>
+                  </button>
+                ))}
+              </div>
+              <div className="action-dock">
+                {game.phase === 'draw' ? (
+                  <>
+                    <button className="action-button secondary-action" onClick={drawFromDiscard} disabled={!canDrawThisTurn || game.discard.length === 0}>Take discard</button>
+                    <button className="action-button primary-action" onClick={drawFromDeck} disabled={!canDrawThisTurn}><Layers3 size={17} /> Draw card</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="action-button secondary-action" onClick={() => setSelectedCardIds([])} disabled={selectedCardIds.length === 0}>Clear</button>
+                    <button className="action-button secondary-action" onClick={discardSelected} disabled={!canDiscard || selectedCardIds.length !== 1}>Discard</button>
+                    <button className="action-button primary-action" onClick={playSelectedStack} disabled={!canPlayStack || selectedCardIds.length < 3}>Play stack <span>{selectedCardIds.length || ''}</span></button>
+                  </>
+                )}
+              </div>
+            </section>
+          </section>
         </section>
       )}
 
