@@ -23,11 +23,6 @@ export function canDiscardThisTurn(state = {}) {
   return state.phase === 'play' && Boolean(state.hasDrawnThisTurn)
 }
 
-export function canOpenNewStack(state = {}) {
-  if (!state || typeof state !== 'object') return false
-  return Number(state.stackCount ?? 0) < 2
-}
-
 export function canPlayerAct(state = {}, playerId) {
   if (!state || typeof state !== 'object' || !playerId) return false
   if (state.players == null || !Array.isArray(state.players)) return false
@@ -144,4 +139,37 @@ export function isValidStack(cards) {
   const missing = span - values.length
 
   return values.length + jokerCount >= 3 && missing <= jokerCount
+}
+
+export function findAiStackMove(hand, stacks = [], playerId) {
+  if (!Array.isArray(hand) || !Array.isArray(stacks) || hand.length === 0) return null
+
+  const maxSize = Math.min(4, hand.length)
+  const canOpenStack = countStacksForPlayer(stacks, playerId) < 2
+  let newStackMove = null
+
+  for (let size = maxSize; size >= 1; size -= 1) {
+    const search = (startIndex, selected) => {
+      if (selected.length === size) {
+        const cards = selected.map((index) => hand[index])
+        const stackIndex = stacks.findIndex((stack) => canExtendStack(stack.cards, cards))
+        if (stackIndex >= 0) return { cards, stackIndex }
+        if (!newStackMove && canOpenStack && cards.length >= 3 && isValidStack(cards)) {
+          newStackMove = { cards, stackIndex: -1 }
+        }
+        return null
+      }
+
+      for (let index = startIndex; index < hand.length; index += 1) {
+        const result = search(index + 1, [...selected, index])
+        if (result) return result
+      }
+      return null
+    }
+
+    const move = search(0, [])
+    if (move) return move
+  }
+
+  return newStackMove
 }

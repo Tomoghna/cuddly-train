@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Bell,
   Check,
@@ -25,15 +25,16 @@ import {
   canExtendStack,
   canOpenNewStackForPlayer,
   canPlayerAct,
-  canPlayStackThisTurn,
   getJokerDisplay,
   getJokerLabel,
   getStandings,
   getTurnMessage,
+  findAiStackMove,
   isValidStack,
   ranks,
   suits,
 } from './gameRules.js'
+import { getReconnectDelay } from './websocketRecovery.js'
 import './App.css'
 
 const palette = ['mint', 'violet', 'amber', 'rose']
@@ -127,48 +128,29 @@ function App() {
   const [game, setGame] = useState(() => createGameState(4, 'seen', { playerId }))
   const [selectedCardIds, setSelectedCardIds] = useState([])
   const [toast, setToast] = useState('')
-  const [connected, setConnected] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState('connecting')
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
   const [serverState, setServerState] = useState({ playerCount: 1, activePlayerId: null, phase: 'draw', scores: {} })
   const socketRef = useRef(null)
+  const joinedRef = useRef(false)
+  const retryNowRef = useRef(null)
 
   const currentPlayer = game?.players[game.activeIndex]
-  const currentHand = currentPlayer?.hand ?? []
+  const currentHand = game?.players.find((player) => player.id === playerId)?.hand ?? []
   const isMyTurn = serverState.activePlayerId === playerId || (!serverState.activePlayerId && !(game?.isSinglePlayer && currentPlayer?.isAI))
   const canActThisTurn = Boolean(game && currentPlayer && canPlayerAct(game, playerId)) || (isMyTurn && game?.phase === 'play')
-  const canDrawThisTurn = isMyTurn && game?.phase === 'draw'
-  const canPlayStack = game ? canPlayStackThisTurn(game) && isMyTurn : false
-  const canDiscard = game ? canDiscardThisTurn(game) && isMyTurn : false
-  const canOpenStack = game && currentPlayer ? canOpenNewStackForPlayer(game.stacks, currentPlayer.id) : false
+  const isConnected = connectionStatus === 'connected'
+  const canDrawThisTurn = isConnected && isMyTurn && game?.phase === 'draw'
+  const canPlayStack = Boolean(isConnected && game?.phase === 'play' && game?.hasDrawnThisTurn && isMyTurn)
+  const canDiscard = game ? isConnected && canDiscardThisTurn(game) && isMyTurn : false
+  const connectionLabel = {
+    connecting: 'Connecting',
+    connected: 'Live',
+    reconnecting: `Reconnecting${reconnectAttempt ? ` (${reconnectAttempt})` : ''}`,
+    offline: 'Offline',
+    error: 'Connection error',
+  }[connectionStatus]
   const turnMessage = getTurnMessage(game ?? { phase: 'draw', hasDrawnThisTurn: false })
-
-  const findBestAiStack = useCallback((hand) => {
-    if (!Array.isArray(hand) || hand.length < 3) return null
-
-    const maxSize = Math.min(4, hand.length)
-    for (let size = maxSize; size >= 3; size -= 1) {
-      const indexes = []
-      const walk = (startIndex, selected) => {
-        if (selected.length === size) {
-          const stackCards = selected.map((indexValue) => hand[indexValue])
-          if (isValidStack(stackCards)) {
-            indexes.push([...selected])
-          }
-          return
-        }
-
-        for (let indexValue = startIndex; indexValue < hand.length; indexValue += 1) {
-          walk(indexValue + 1, [...selected, indexValue])
-        }
-      }
-
-      walk(0, [])
-      if (indexes.length > 0) {
-        return indexes[0].map((indexValue) => hand[indexValue])
-      }
-    }
-
-    return null
-  }, [])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -177,12 +159,40 @@ function App() {
   }, [toast])
 
   useEffect(() => {
-    const socket = new WebSocket(import.meta.env.VITE_WS_URL || 'ws://localhost:3001')
-    socketRef.current = socket
+    let disposed = false
+    let reconnectTimer
+    let retryCount = 0
+    let retryStopped = false
+    let socket = null
 
-    const handleOpen = () => {
-      setConnected(true)
-      socket.send(JSON.stringify({ type: 'join', roomId: roomCode, playerId }))
+    const isCurrentSocket = (candidate) => socketRef.current === candidate
+
+    const scheduleReconnect = (immediate = false) => {
+      if (disposed || retryStopped || !navigator.onLine) {
+        setConnectionStatus(retryStopped ? 'error' : 'offline')
+        return
+      }
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      const delay = immediate ? 0 : getReconnectDelay(retryCount)
+      retryCount += 1
+      setReconnectAttempt(retryCount)
+      setConnectionStatus('reconnecting')
+      reconnectTimer = window.setTimeout(connect, delay)
+    }
+
+    const handleOnline = () => {
+      if (!socketRef.current || socketRef.current.readyState >= WebSocket.CLOSING) {
+        scheduleReconnect(true)
+      }
+    }
+
+    const handleOffline = () => {
+      joinedRef.current = false
+      setConnectionStatus('offline')
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      const currentSocket = socketRef.current
+      socketRef.current = null
+      currentSocket?.close()
     }
 
     const handleMessage = (event) => {
@@ -190,22 +200,33 @@ function App() {
         const message = JSON.parse(event.data)
 
         if (message.type === 'room_state' || message.type === 'game_action') {
+          if (!Array.isArray(message.players) || !message.players.some((player) => player.id === playerId)) {
+            return
+          }
+          joinedRef.current = true
+          retryCount = 0
+          setReconnectAttempt(0)
+          setConnectionStatus('connected')
           setServerState({
             playerCount: message.playerCount || 1,
             activePlayerId: message.activePlayerId || null,
             phase: message.phase || 'draw',
             scores: message.scores || {},
+            hasDrawnThisTurn: Boolean(message.hasDrawnThisTurn),
           })
 
           if (Array.isArray(message.players) && message.players.length > 0) {
             setGame((current) => {
               if (!current) return current
-              const nextPlayers = current.players.map((player, index) => ({
-                ...player,
-                id: message.players[index]?.id || player.id,
-                name: message.players[index]?.name || player.name,
-                initials: message.players[index]?.initials || player.initials,
-                color: message.players[index]?.color || player.color,
+              const nextPlayers = message.players.map((serverPlayer) => ({
+                id: serverPlayer.id,
+                name: serverPlayer.name,
+                initials: serverPlayer.initials,
+                color: serverPlayer.color,
+                hand: serverPlayer.id === playerId
+                  ? serverPlayer.hand ?? []
+                  : Array.from({ length: serverPlayer.handCount ?? 0 }, (_, index) => ({ id: `hidden-${serverPlayer.id}-${index}` })),
+                isAI: false,
               }))
 
               return {
@@ -213,38 +234,101 @@ function App() {
                 room: message.roomId || current.room,
                 playerCount: message.playerCount || current.playerCount,
                 phase: message.phase || current.phase,
+                hasDrawnThisTurn: Boolean(message.hasDrawnThisTurn),
                 activeIndex: message.activePlayerId ? nextPlayers.findIndex((player) => player.id === message.activePlayerId) : current.activeIndex,
                 players: nextPlayers,
+                deck: Array.from({ length: message.deckCount ?? 0 }, (_, index) => ({ id: `deck-${index}` })),
+                discard: message.discard ?? current.discard,
+                stacks: message.stacks ?? current.stacks,
+                winner: message.winner ?? null,
+                jokerMode: message.jokerMode || current.jokerMode,
+                jokerLabel: message.jokerLabel || current.jokerLabel,
+                isSinglePlayer: false,
               }
             })
-          } else {
-            setGame((current) => ({
-              ...current,
-              phase: message.phase || current?.phase || 'draw',
-              activeIndex: message.activePlayerId && current
-                ? current.players.findIndex((player) => player.id === message.activePlayerId)
-                : current?.activeIndex ?? 0,
-            }))
+            if (message.winner) setScreen('winner')
           }
         }
 
         if (message.type === 'error') {
           setToast(message.message || 'The table rejected your move.')
+          if (!joinedRef.current) {
+            retryStopped = ['ROOM_FULL', 'INVALID_ROOM_ID', 'INVALID_PLAYER_ID'].includes(message.code)
+            joinedRef.current = false
+            setConnectionStatus(retryStopped ? 'error' : 'reconnecting')
+            socket?.close()
+          }
         }
       } catch {
         setToast('Received an invalid room update.')
       }
     }
 
-    socket.addEventListener('open', handleOpen)
-    socket.addEventListener('message', handleMessage)
-    socket.addEventListener('close', () => setConnected(false))
-    socket.addEventListener('error', () => setConnected(false))
+    function connect() {
+      if (disposed || retryStopped || !navigator.onLine) {
+        if (!navigator.onLine) setConnectionStatus('offline')
+        return
+      }
+      if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) return
+      setConnectionStatus(retryCount === 0 ? 'connecting' : 'reconnecting')
+      joinedRef.current = false
+      try {
+        socket = new WebSocket(import.meta.env.VITE_WS_URL || 'ws://localhost:3001')
+      } catch {
+        socketRef.current = null
+        scheduleReconnect()
+        return
+      }
+      socketRef.current = socket
+      socket.addEventListener('open', () => {
+        if (!isCurrentSocket(socket)) return
+        socket.send(JSON.stringify({ type: 'join', roomId: roomCode, playerId }))
+      })
+      socket.addEventListener('message', (event) => {
+        if (isCurrentSocket(socket)) handleMessage(event)
+      })
+      socket.addEventListener('error', () => {
+        if (isCurrentSocket(socket)) {
+          setConnectionStatus('reconnecting')
+          socket.close()
+        }
+      })
+      socket.addEventListener('close', () => {
+        if (!isCurrentSocket(socket)) return
+        joinedRef.current = false
+        socketRef.current = null
+        scheduleReconnect()
+      })
+    }
 
+    const retryNow = () => {
+      retryStopped = false
+      retryCount = 0
+      setReconnectAttempt(0)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
+        const currentSocket = socketRef.current
+        socketRef.current = null
+        joinedRef.current = false
+        currentSocket.close()
+        scheduleReconnect(true)
+      } else {
+        scheduleReconnect(true)
+      }
+    }
+    retryNowRef.current = retryNow
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    connect()
     return () => {
-      socket.removeEventListener('open', handleOpen)
-      socket.removeEventListener('message', handleMessage)
-      socket.close()
+      disposed = true
+      joinedRef.current = false
+      clearTimeout(reconnectTimer)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+      retryNowRef.current = null
+      if (socket) socket.close()
+      if (socketRef.current === socket) socketRef.current = null
     }
   }, [playerId, roomCode])
 
@@ -255,11 +339,21 @@ function App() {
     }
 
     const socket = socketRef.current
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setToast('Reconnect to the table before playing.')
+    if (!joinedRef.current || !socket || socket.readyState !== WebSocket.OPEN) {
+      setToast('Wait until the room connection is restored before playing.')
       return false
     }
 
+    socket.send(JSON.stringify({ type, payload }))
+    return true
+  }
+
+  const sendRoomControl = (type, payload = {}) => {
+    const socket = socketRef.current
+    if (!joinedRef.current || !socket || socket.readyState !== WebSocket.OPEN) {
+      setToast('Wait until the room connection is restored before configuring it.')
+      return false
+    }
     socket.send(JSON.stringify({ type, payload }))
     return true
   }
@@ -269,10 +363,14 @@ function App() {
     nextGame.room = roomCode || 'NOVA-4821'
     setGame(nextGame)
     setSelectedCardIds([])
+    sendRoomControl('configure_room', { playerCount: countOverride, jokerMode: modeOverride })
     setScreen('lobby')
   }
 
-  const openTable = () => setScreen('table')
+  const openTable = () => {
+    sendRoomControl('start_game')
+    setScreen('table')
+  }
 
   const copyRoomCode = async () => {
     const target = (roomCode || game?.room || 'NOVA-4821').trim()
@@ -306,28 +404,7 @@ function App() {
       setToast('It is not your turn to draw.')
       return
     }
-    if (!sendAction('draw')) return
-
-    setGame((current) => {
-      if (!current) return current
-      const nextDeck = [...current.deck]
-      const pickedCard = nextDeck.pop()
-      if (!pickedCard) return current
-
-      const updatedPlayers = current.players.map((player, index) =>
-        index === current.activeIndex
-          ? { ...player, hand: [...player.hand, pickedCard] }
-          : player,
-      )
-
-      return {
-        ...current,
-        deck: nextDeck,
-        players: updatedPlayers,
-        phase: 'play',
-        hasDrawnThisTurn: true,
-      }
-    })
+    if (!sendAction('draw', { source: 'deck' })) return
     setToast('Card drawn from the deck.')
   }
 
@@ -340,25 +417,7 @@ function App() {
       setToast('It is not your turn to draw.')
       return
     }
-    if (!sendAction('draw')) return
-
-    setGame((current) => {
-      if (!current || current.discard.length === 0) return current
-      const [pickedCard, ...remainingDiscard] = current.discard
-      const updatedPlayers = current.players.map((player, index) =>
-        index === current.activeIndex
-          ? { ...player, hand: [...player.hand, pickedCard] }
-          : player,
-      )
-
-      return {
-        ...current,
-        players: updatedPlayers,
-        discard: remainingDiscard,
-        phase: 'play',
-        hasDrawnThisTurn: true,
-      }
-    })
+    if (!sendAction('draw', { source: 'discard' })) return
     setToast('Card picked from the discard pile.')
   }
 
@@ -374,43 +433,13 @@ function App() {
 
     const chosenId = selectedCardIds[0]
     if (!sendAction('discard', { cardId: chosenId })) return
-
-    setGame((current) => {
-      if (!current) return current
-      const active = current.players[current.activeIndex]
-      const selectedCard = active.hand.find((card) => card.id === chosenId)
-      if (!selectedCard) return current
-
-      const remainingHand = active.hand.filter((card) => card.id !== chosenId)
-      const nextPlayers = current.players.map((player, index) =>
-        index === current.activeIndex ? { ...player, hand: remainingHand } : player,
-      )
-      const nextIndex = advanceTurnIndex(nextPlayers.length, current.activeIndex)
-      const winner = remainingHand.length === 0 ? active.name : null
-
-      return {
-        ...current,
-        players: nextPlayers,
-        discard: [selectedCard, ...current.discard],
-        activeIndex: winner ? current.activeIndex : nextIndex,
-        phase: 'draw',
-        hasDrawnThisTurn: false,
-        winner,
-      }
-    })
-
     setSelectedCardIds([])
-    if (currentHand.length <= 1) {
-      setScreen('winner')
-      setToast('You played your final card.')
-    } else {
-      setToast('Card discarded.')
-    }
+    setToast('Card discarded.')
   }
 
   const playSelectedStack = () => {
-    if (!game || !canPlayStackThisTurn(game)) {
-      setToast('You must draw first, then discard a card before playing a stack.')
+    if (!game || game.phase !== 'play' || !game.hasDrawnThisTurn) {
+      setToast('You must draw before playing a stack.')
       return
     }
 
@@ -442,38 +471,9 @@ function App() {
       return
     }
 
-    if (!sendAction('play_stack', { cardIds: selectedCardIds, cards: stackCards })) return
-
-    const remainingHand = handSnapshot.filter((card) => !selectedCardIds.includes(card.id))
-
-    setGame((current) => {
-      if (!current) return current
-      const active = current.players[current.activeIndex]
-      const updatedPlayers = current.players.map((player, index) =>
-        index === current.activeIndex ? { ...player, hand: remainingHand } : player,
-      )
-      const winner = remainingHand.length === 0 ? active.name : null
-
-      const nextStacks = existingStack
-        ? current.stacks.map((stack) => stack === existingStack ? { ...stack, cards: [...stack.cards, ...stackCards] } : stack)
-        : [...current.stacks, { ownerId: active.id, cards: stackCards }]
-
-      return {
-        ...current,
-        players: updatedPlayers,
-        stacks: nextStacks,
-        activeIndex: winner ? current.activeIndex : advanceTurnIndex(updatedPlayers.length, current.activeIndex),
-        phase: 'draw',
-        hasDrawnThisTurn: false,
-        winner,
-      }
-    })
-
+    if (!sendAction('play_stack', { cardIds: selectedCardIds })) return
     setSelectedCardIds([])
-    if (remainingHand.length === 0) {
-      setScreen('winner')
-      setToast('Stack complete. You won the round!')
-    } else if (existingStack) {
+    if (existingStack) {
       setToast('Cards added to the table stack.')
     } else {
       setToast('Stack played. Turn passed to the next player.')
@@ -483,7 +483,8 @@ function App() {
   const sortHand = () => {
     setGame((current) => {
       if (!current) return current
-      const active = current.players[current.activeIndex]
+      const active = current.players.find((player) => player.id === playerId)
+      if (!active) return current
       const sorted = [...active.hand].sort((left, right) => {
         const leftRank = ranks.indexOf(left.rank)
         const rightRank = ranks.indexOf(right.rank)
@@ -491,8 +492,8 @@ function App() {
         return suits.indexOf(left.suit) - suits.indexOf(right.suit)
       })
 
-      const updatedPlayers = current.players.map((player, index) =>
-        index === current.activeIndex ? { ...player, hand: sorted } : player,
+      const updatedPlayers = current.players.map((player) =>
+        player.id === playerId ? { ...player, hand: sorted } : player,
       )
 
       return { ...current, players: updatedPlayers }
@@ -528,6 +529,34 @@ function App() {
         const nextStacks = [...current.stacks]
 
         if (current.phase === 'draw') {
+          const stackMove = findAiStackMove(active.hand, current.stacks, active.id)
+          if (stackMove) {
+            const remainingHand = active.hand.filter((card) =>
+              !stackMove.cards.some((stackCard) => stackCard.id === card.id),
+            )
+            nextPlayers[current.activeIndex] = { ...active, hand: remainingHand }
+            if (stackMove.stackIndex >= 0) {
+              nextStacks[stackMove.stackIndex] = {
+                ...nextStacks[stackMove.stackIndex],
+                cards: [...nextStacks[stackMove.stackIndex].cards, ...stackMove.cards],
+              }
+            } else {
+              nextStacks.push({ ownerId: active.id, cards: stackMove.cards })
+            }
+
+            const winner = remainingHand.length === 0 ? active.name : null
+            if (winner) setScreen('winner')
+            return {
+              ...current,
+              players: nextPlayers,
+              stacks: nextStacks,
+              activeIndex: winner ? current.activeIndex : advanceTurnIndex(nextPlayers.length, current.activeIndex),
+              phase: 'draw',
+              hasDrawnThisTurn: false,
+              winner,
+            }
+          }
+
           const picked = nextDeck.pop() ?? nextDiscard.shift()
           if (!picked) return current
           nextPlayers[current.activeIndex] = {
@@ -571,30 +600,6 @@ function App() {
           }
         }
 
-        const stackChoice = findBestAiStack(active.hand)
-        if (stackChoice && stackChoice.length >= 3) {
-          const remainingHand = active.hand.filter((card) => !stackChoice.some((stackCard) => stackCard.id === card.id))
-          nextPlayers[current.activeIndex] = {
-            ...active,
-            hand: remainingHand,
-          }
-          nextStacks.push({ ownerId: active.id, cards: stackChoice })
-
-          if (remainingHand.length === 0) {
-            setScreen('winner')
-          }
-
-          return {
-            ...current,
-            players: nextPlayers,
-            stacks: nextStacks,
-            activeIndex: remainingHand.length === 0 ? current.activeIndex : advanceTurnIndex(nextPlayers.length, current.activeIndex),
-            phase: 'draw',
-            hasDrawnThisTurn: false,
-            winner: remainingHand.length === 0 ? active.name : null,
-          }
-        }
-
         const discarded = active.hand[0]
         if (!discarded) return current
 
@@ -622,7 +627,7 @@ function App() {
     }, 700)
 
     return () => window.clearTimeout(timer)
-  }, [findBestAiStack, game, screen])
+  }, [game, screen])
 
   const standings = game ? getStandings(game.players) : []
   const activePlayer = game?.players?.[game.activeIndex] ?? null
@@ -770,7 +775,12 @@ function App() {
             <div className="workspace-name">Workspace / <b>{game.room}</b> <ChevronDown size={14} /></div>
             <div className="topbar-actions">
               <div className="connection">
-                <span className={connected ? 'status-dot live' : 'status-dot'} /> {connected ? 'Live room' : 'Offline'}
+                <span className={`status-dot ${isConnected ? 'live' : ''}`} /> {connectionLabel}
+                {!isConnected && (
+                  <button className="connection-retry" onClick={() => retryNowRef.current?.()}>
+                    <RefreshCw size={13} /> Retry
+                  </button>
+                )}
               </div>
               <button className="icon-button" aria-label="Notifications">
                 <Bell size={18} />
@@ -898,7 +908,12 @@ function App() {
             <div className="workspace-name">Workspace / <b>{game.room}</b> <ChevronDown size={14} /></div>
             <div className="topbar-actions">
               <div className="connection">
-                <span className={connected ? 'status-dot live' : 'status-dot'} /> {connected ? 'Live table' : 'Offline'}
+                <span className={`status-dot ${isConnected ? 'live' : ''}`} /> {connectionLabel}
+                {!isConnected && (
+                  <button className="connection-retry" onClick={() => retryNowRef.current?.()}>
+                    <RefreshCw size={13} /> Retry
+                  </button>
+                )}
               </div>
               <button className="icon-button" aria-label="Notifications">
                 <Bell size={18} />

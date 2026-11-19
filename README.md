@@ -19,6 +19,7 @@ Useful individual commands:
 npm run dev:client
 npm run dev:server
 npm run lint
+npm test
 npm run build
 ```
 

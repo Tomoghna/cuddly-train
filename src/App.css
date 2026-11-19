@@ -307,6 +307,22 @@ button:disabled {
   color: #7e8791;
 }
 
+.connection-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.connection-retry:hover {
+  background: rgba(255, 118, 93, 0.1);
+}
+
 .status-dot {
   width: 7px;
   height: 7px;

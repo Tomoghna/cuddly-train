@@ -6,7 +6,7 @@ import {
   getJokerDisplay,
   getJokerLabel,
   isValidStack,
-  canOpenNewStack,
+  canOpenNewStackForPlayer,
   canPlayerAct,
   canExtendStack,
   isStackComplete,
@@ -14,6 +14,7 @@ import {
   getStandings,
   canDiscardThisTurn,
   getTurnMessage,
+  findAiStackMove,
 } from '../src/gameRules.js'
 
 test('accepts a valid same-suit sequence', () => {
@@ -72,8 +73,14 @@ test('derives the joker label from the face-up card at the bottom of the deck', 
 })
 
 test('blocks opening a third stack when a player already has two active stacks', () => {
-  assert.equal(canOpenNewStack({ stackCount: 2 }), false)
-  assert.equal(canOpenNewStack({ stackCount: 1 }), true)
+  const stacks = [
+    { ownerId: 'p1', cards: [] },
+    { ownerId: 'p1', cards: [] },
+    { ownerId: 'p2', cards: [] },
+  ]
+
+  assert.equal(canOpenNewStackForPlayer(stacks, 'p1'), false)
+  assert.equal(canOpenNewStackForPlayer(stacks, 'p2'), true)
 })
 
 test('shows the joker face-up in seen mode and hides it in blind mode', () => {
@@ -138,4 +145,48 @@ test('provides the correct turn message for the current phase', () => {
   assert.equal(getTurnMessage({ phase: 'draw', hasDrawnThisTurn: false }), 'Draw a card')
   assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: true }), 'Discard or build a stack')
   assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: false }), 'Draw before you can act')
+})
+
+test('finds a valid stack for an AI to open', () => {
+  const hand = [
+    { id: '1', rank: '4', suit: '♠' },
+    { id: '2', rank: '5', suit: '♠' },
+    { id: '3', rank: '6', suit: '♠' },
+    { id: '4', rank: 'Q', suit: '♥' },
+  ]
+
+  const move = findAiStackMove(hand, [], 'cpu-1')
+  assert.deepEqual(move.cards.map((card) => card.id), ['1', '2', '3'])
+  assert.equal(move.stackIndex, -1)
+})
+
+test('finds a one-card stack extension even when the AI already has two stacks', () => {
+  const existing = [
+    { id: 'a', rank: '4', suit: '♠' },
+    { id: 'b', rank: '5', suit: '♠' },
+    { id: 'c', rank: '6', suit: '♠' },
+  ]
+  const stacks = [
+    { ownerId: 'cpu-1', cards: existing },
+    { ownerId: 'cpu-1', cards: [{ id: 'd', rank: '8', suit: '♦' }, { id: 'e', rank: '8', suit: '♠' }, { id: 'f', rank: '8', suit: '♥' }] },
+  ]
+  const hand = [{ id: 'g', rank: '7', suit: '♠' }]
+
+  const move = findAiStackMove(hand, stacks, 'cpu-1')
+  assert.equal(move.stackIndex, 0)
+  assert.deepEqual(move.cards.map((card) => card.id), ['g'])
+})
+
+test('does not open a third AI stack when no extension is available', () => {
+  const stacks = [
+    { ownerId: 'cpu-1', cards: [] },
+    { ownerId: 'cpu-1', cards: [] },
+  ]
+  const hand = [
+    { id: '1', rank: '4', suit: '♠' },
+    { id: '2', rank: '5', suit: '♠' },
+    { id: '3', rank: '6', suit: '♠' },
+  ]
+
+  assert.equal(findAiStackMove(hand, stacks, 'cpu-1'), null)
 })
