@@ -3,14 +3,17 @@ import assert from 'node:assert/strict'
 
 import {
   canPlayStackThisTurn,
+  canSeeJoker,
   getJokerDisplay,
   getJokerLabel,
+  markJokers,
   isValidStack,
   canOpenNewStackForPlayer,
   canPlayerAct,
   canExtendStack,
   isStackComplete,
   advanceTurnIndex,
+  getRelativeSeat,
   getStandings,
   canDiscardThisTurn,
   getTurnMessage,
@@ -59,17 +62,34 @@ test('rejects same-rank stacks larger than the maximum legal set', () => {
   assert.equal(isValidStack(cards), false)
 })
 
-test('allows a stack to be played before a draw on the turn', () => {
-  assert.equal(canPlayStackThisTurn({ phase: 'play', hasDrawnThisTurn: false }), true)
+test('allows playing a stack instead of drawing on the turn', () => {
+  assert.equal(canPlayStackThisTurn({ phase: 'draw', hasDrawnThisTurn: false }), true)
 })
 
-test('blocks stack play after a card has already been drawn this turn', () => {
+test('blocks stack play after drawing a card this turn', () => {
   assert.equal(canPlayStackThisTurn({ phase: 'play', hasDrawnThisTurn: true }), false)
 })
 
-test('derives the joker label from the face-up card at the bottom of the deck', () => {
-  assert.equal(getJokerLabel({ rank: '8', suit: '♣' }), '9♣')
-  assert.equal(getJokerLabel({ rank: 'K', suit: '♠' }), 'A♠')
+test('marks the four cards of the rank after the bottom card as jokers', () => {
+  const cards = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+    .flatMap((rank) => ['♠', '♥', '♣', '♦'].map((suit) => ({
+      id: `${rank}-${suit}`,
+      rank,
+      suit,
+    })))
+  const bottomCardIndex = cards.findIndex((card) => card.rank === '4' && card.suit === '♥')
+  const deck = [...cards.slice(bottomCardIndex), ...cards.slice(0, bottomCardIndex)]
+  const markedDeck = markJokers(deck)
+
+  assert.equal(markedDeck.length, 52)
+  assert.equal(markedDeck.filter((card) => card.isJoker).length, 4)
+  assert.deepEqual(markedDeck.filter((card) => card.isJoker).map((card) => card.rank), ['5', '5', '5', '5'])
+  assert.equal(getJokerLabel(deck[0]), '5 of any suit')
+})
+
+test('derives the joker label from the bottom card rank', () => {
+  assert.equal(getJokerLabel({ rank: '8', suit: '♣' }), '9 of any suit')
+  assert.equal(getJokerLabel({ rank: 'K', suit: '♠' }), 'A of any suit')
 })
 
 test('blocks opening a third stack when a player already has two active stacks', () => {
@@ -84,15 +104,22 @@ test('blocks opening a third stack when a player already has two active stacks',
 })
 
 test('shows the joker face-up in seen mode and hides it in blind mode', () => {
-  assert.equal(getJokerDisplay('seen', { rank: '8', suit: '♣' }), '9♣')
+  assert.equal(getJokerDisplay('seen', { rank: '8', suit: '♣' }), '9 of any suit')
   assert.equal(getJokerDisplay('blind', { rank: '8', suit: '♣' }), '??')
+})
+
+test('only a player who has played a stack sees a blind joker', () => {
+  assert.equal(canSeeJoker('blind', 'p1', []), false)
+  assert.equal(canSeeJoker('blind', 'p1', ['p1']), true)
+  assert.equal(canSeeJoker('blind', 'p2', ['p1']), false)
+  assert.equal(canSeeJoker('seen', 'p2', []), true)
 })
 
 test('only the active player can act in the current turn phase', () => {
   const state = { activeIndex: 1, phase: 'play', players: [{ id: 'p1' }, { id: 'p2' }] }
   assert.equal(canPlayerAct(state, 'p2'), true)
   assert.equal(canPlayerAct(state, 'p1'), false)
-  assert.equal(canPlayerAct({ ...state, phase: 'draw' }, 'p2'), false)
+  assert.equal(canPlayerAct({ ...state, phase: 'draw' }, 'p2'), true)
 })
 
 test('allows a valid sequence to extend an existing same-suit stack', () => {
@@ -125,6 +152,16 @@ test('cycles turn order around the table correctly', () => {
   assert.equal(advanceTurnIndex(2, 1), 0)
 })
 
+test('assigns opponent seats relative to each viewer for two, three, and four players', () => {
+  const players = ['p1', 'p2', 'p3', 'p4'].map((id) => ({ id }))
+  assert.equal(getRelativeSeat(players.slice(0, 2), 'p1', 'p2'), 'top')
+  assert.equal(getRelativeSeat(players.slice(0, 3), 'p1', 'p2'), 'right')
+  assert.equal(getRelativeSeat(players.slice(0, 3), 'p1', 'p3'), 'left')
+  assert.equal(getRelativeSeat(players, 'p1', 'p2'), 'right')
+  assert.equal(getRelativeSeat(players, 'p1', 'p3'), 'top')
+  assert.equal(getRelativeSeat(players, 'p1', 'p4'), 'left')
+})
+
 test('orders standings by cards remaining', () => {
   const players = [
     { id: 'a', name: 'Alice', hand: [1, 2] },
@@ -142,9 +179,9 @@ test('discards are only legal after drawing in the current turn', () => {
 })
 
 test('provides the correct turn message for the current phase', () => {
-  assert.equal(getTurnMessage({ phase: 'draw', hasDrawnThisTurn: false }), 'Draw a card')
-  assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: true }), 'Discard or build a stack')
-  assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: false }), 'Draw before you can act')
+  assert.equal(getTurnMessage({ phase: 'draw', hasDrawnThisTurn: false }), 'Draw a card or play a stack')
+  assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: true }), 'Discard a card')
+  assert.equal(getTurnMessage({ phase: 'play', hasDrawnThisTurn: false }), 'Draw a card or play a stack')
 })
 
 test('finds a valid stack for an AI to open', () => {

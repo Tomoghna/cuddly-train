@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { canExtendStack, getJokerLabel, isValidStack, ranks, suits } from '../src/gameRules.js'
+import { canExtendStack, canSeeJoker, getJokerLabel, isValidStack, markJokers, ranks, suits } from '../src/gameRules.js'
 
 const rooms = new Map()
 const reconnectGraceMs = Math.max(1_000, Number(process.env.FISS_RECONNECT_MS || 30_000))
@@ -30,6 +30,8 @@ function newRoom(id) {
     maxPlayers: 4,
     jokerMode: 'seen',
     jokerLabel: null,
+    jokerReference: null,
+    jokerSeenBy: new Set(),
     disconnectTimers: new Map(),
   }
   rooms.set(id, room)
@@ -57,6 +59,17 @@ function validatePlayerId(playerId) {
   return typeof playerId === 'string' && /^[a-z0-9-]{1,64}$/i.test(playerId)
 }
 
+function normalizePlayerName(name) {
+  if (typeof name !== 'string') return null
+  const normalized = name.trim()
+  return normalized.length > 0 && normalized.length <= 24 ? normalized : null
+}
+
+function getPlayerInitials(name) {
+  const words = name.trim().split(/\s+/)
+  return (words.length > 1 ? words.slice(0, 2).map((word) => word[0]).join('') : name.slice(0, 2)).toUpperCase()
+}
+
 function validateRoomId(roomId) {
   return typeof roomId === 'string'
     && roomId.trim().length > 0
@@ -77,20 +90,11 @@ function buildDeck() {
       })
     }
   }
-  for (let index = 0; index < 4; index += 1) {
-    deck.push({
-      id: `joker-${index}-${randomUUID()}`,
-      rank: 'JOKER',
-      suit: '★',
-      color: 'joker',
-      isJoker: true,
-    })
-  }
   for (let index = deck.length - 1; index > 0; index -= 1) {
     const randomIndex = Math.floor(Math.random() * (index + 1))
     ;[deck[index], deck[randomIndex]] = [deck[randomIndex], deck[index]]
   }
-  return deck
+  return markJokers(deck)
 }
 
 function startRoom(room) {
@@ -104,6 +108,7 @@ function startRoom(room) {
   room.phase = 'draw'
   room.hasDrawnThisTurn = false
   room.winner = null
+  room.jokerSeenBy = new Set()
 
   for (const player of room.players) {
     player.hand = []
@@ -115,13 +120,19 @@ function startRoom(room) {
     }
   }
 
-  const starter = room.deck.pop()
-  if (starter) room.discard.push(starter)
-  room.jokerLabel = getJokerLabel(room.discard[0])
+  room.jokerReference = room.deck[0] ?? null
+  room.jokerLabel = getJokerLabel(room.jokerReference)
   room.started = true
 }
 
 function roomSnapshot(room, recipientId) {
+  const jokerVisible = canSeeJoker(room.jokerMode, recipientId, [...room.jokerSeenBy])
+  const snapshotCard = (card) => {
+    if (jokerVisible) return card
+    const hiddenCard = { ...card }
+    delete hiddenCard.isJoker
+    return hiddenCard
+  }
   return {
     type: 'room_state',
     roomId: room.id,
@@ -134,16 +145,21 @@ function roomSnapshot(room, recipientId) {
     scores: room.scores,
     winner: room.winner,
     jokerMode: room.jokerMode,
-    jokerLabel: room.jokerLabel,
+    jokerLabel: jokerVisible ? room.jokerLabel : null,
+    jokerReference: jokerVisible ? room.jokerReference : null,
+    jokerVisible,
     started: room.started,
     deckCount: room.deck.length,
-    discard: room.discard,
-    stacks: room.stacks,
+    discard: room.discard.map(snapshotCard),
+    stacks: room.stacks.map((stack) => ({
+      ...stack,
+      cards: stack.cards.map(snapshotCard),
+    })),
     players: room.players.map((player) => ({
       ...player,
       connected: room.clients.has(player.id),
       handCount: player.hand?.length ?? 0,
-      hand: player.id === recipientId ? player.hand ?? [] : [],
+      hand: player.id === recipientId ? (player.hand ?? []).map(snapshotCard) : [],
     })),
   }
 }
@@ -199,6 +215,11 @@ wss.on('connection', (socket) => {
         reject(socket, 'INVALID_PLAYER_ID', 'Player ID must contain only letters, numbers, and hyphens')
         return
       }
+      const requestedName = message.name === undefined ? null : normalizePlayerName(message.name)
+      if (message.name !== undefined && !requestedName) {
+        reject(socket, 'INVALID_PLAYER_NAME', 'Player name must be between 1 and 24 characters')
+        return
+      }
       room = getRoom(message.roomId)
       const existingPlayer = message.playerId
         ? room.players.find((candidate) => candidate.id === message.playerId)
@@ -224,19 +245,37 @@ wss.on('connection', (socket) => {
       room.clients.set(playerId, socket)
       if (!existingPlayer) {
         const index = room.players.length
+        const name = requestedName || (index === 0 ? 'You' : `Player ${index + 1}`)
         room.players.push({
           id: playerId,
-          name: index === 0 ? 'You' : `Player ${index + 1}`,
-          initials: index === 0 ? 'AL' : `P${index + 1}`,
+          name,
+          initials: getPlayerInitials(name),
           color: ['mint', 'violet', 'amber', 'rose'][index % 4],
           hand: [],
         })
+      } else if (requestedName) {
+        existingPlayer.name = requestedName
+        existingPlayer.initials = getPlayerInitials(requestedName)
       }
       if (!room.activePlayerId) room.activePlayerId = playerId
       publishRoom(room)
       return
     }
     if (!room) { reject(socket, 'JOIN_REQUIRED', 'Join a room first'); return }
+    if (message.type === 'set_player_name') {
+      if (!isPlainObject(message.payload)) { rejectInvalidPayload(socket); return }
+      const name = normalizePlayerName(message.payload.name)
+      if (!name) {
+        reject(socket, 'INVALID_PLAYER_NAME', 'Player name must be between 1 and 24 characters')
+        return
+      }
+      const player = room.players.find((candidate) => candidate.id === playerId)
+      if (!player) { reject(socket, 'PLAYER_NOT_FOUND', 'Player is not part of this table'); return }
+      player.name = name
+      player.initials = getPlayerInitials(name)
+      publishRoom(room)
+      return
+    }
     if (message.type === 'configure_room') {
       if (room.started) { reject(socket, 'GAME_ALREADY_STARTED', 'The game has already started'); return }
       if (playerId !== room.players[0]?.id) { reject(socket, 'NOT_ROOM_HOST', 'Only the host can configure the table before start'); return }
@@ -278,16 +317,16 @@ wss.on('connection', (socket) => {
         reject(socket, 'NOT_YOUR_TURN', 'Wait for the active player to finish')
         return
       }
-      if (room.phase === 'draw' && message.type !== 'draw') {
-        reject(socket, 'DRAW_REQUIRED', 'Draw a card before playing your move')
+      if (room.phase === 'draw' && !['draw', 'play_stack'].includes(message.type)) {
+        reject(socket, 'DRAW_REQUIRED', 'Draw a card or play a stack to complete your turn')
         return
       }
       if (room.phase === 'play' && message.type === 'draw') {
         reject(socket, 'ALREADY_DREW', 'You already drew a card this turn')
         return
       }
-      if (message.type === 'play_stack' && !room.hasDrawnThisTurn) {
-        reject(socket, 'DRAW_REQUIRED', 'Draw a card before playing a stack')
+      if (message.type === 'play_stack' && room.hasDrawnThisTurn) {
+        reject(socket, 'STACK_AFTER_DRAW', 'You must play a stack before drawing')
         return
       }
       if (message.type === 'discard' && !room.hasDrawnThisTurn) {
@@ -322,6 +361,7 @@ wss.on('connection', (socket) => {
         } else {
           room.stacks.push({ ownerId: playerId, cards: stackCards })
         }
+        if (room.jokerMode === 'blind') room.jokerSeenBy.add(playerId)
         active.hand = active.hand.filter((card) => !cardIds.includes(card.id))
         room.scores[playerId] = (room.scores[playerId] || 0) + cardIds.length * 10
         if (active.hand.length === 0) room.winner = active.name
@@ -347,7 +387,6 @@ wss.on('connection', (socket) => {
         }
         active.hand = active.hand.filter((card) => card.id !== discarded.id)
         room.discard.unshift(discarded)
-        room.jokerLabel = getJokerLabel(room.discard[0])
         if (active.hand.length === 0) room.winner = active.name
         if (room.winner) {
           room.phase = 'draw'

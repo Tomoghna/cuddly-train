@@ -9,13 +9,22 @@ export function rankAfter(rank) {
 }
 
 export function getJokerLabel(card) {
-  if (!card || !card.rank) return 'A♠'
-  return `${rankAfter(card.rank)}${card.suit ?? '♠'}`
+  if (!card || !card.rank) return 'A of any suit'
+  return `${rankAfter(card.rank)} of any suit`
+}
+
+export function markJokers(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return []
+  const jokerRank = rankAfter(cards[0].rank)
+  return cards.map((card) => ({
+    ...card,
+    isJoker: card.rank === jokerRank,
+  }))
 }
 
 export function canPlayStackThisTurn(state = {}) {
   if (!state || typeof state !== 'object') return false
-  return state.phase === 'play' && !state.hasDrawnThisTurn
+  return state.phase === 'draw' && !state.hasDrawnThisTurn
 }
 
 export function canDiscardThisTurn(state = {}) {
@@ -28,7 +37,7 @@ export function canPlayerAct(state = {}, playerId) {
   if (state.players == null || !Array.isArray(state.players)) return false
   const activePlayer = state.players[state.activeIndex]
   if (!activePlayer) return false
-  return activePlayer.id === playerId && state.phase === 'play'
+  return activePlayer.id === playerId && ['draw', 'play'].includes(state.phase)
 }
 
 export function isStackComplete(stack = []) {
@@ -78,6 +87,21 @@ export function advanceTurnIndex(playerCount, currentIndex) {
   return (safeIndex + 1) % safeCount
 }
 
+export function getRelativeSeat(players = [], viewerId, playerId) {
+  if (!Array.isArray(players) || players.length < 2) return null
+  const viewerIndex = players.findIndex((player) => player.id === viewerId)
+  const playerIndex = players.findIndex((player) => player.id === playerId)
+  if (viewerIndex < 0 || playerIndex < 0) return null
+  if (viewerIndex === playerIndex) return 'bottom'
+
+  const offset = (playerIndex - viewerIndex + players.length) % players.length
+  if (players.length === 2) return 'top'
+  if (players.length === 3) return offset === 1 ? 'right' : 'left'
+  if (offset === 1) return 'right'
+  if (offset === 2) return 'top'
+  return 'left'
+}
+
 export function getStandings(players = []) {
   if (!Array.isArray(players)) return []
   return [...players].sort((left, right) => left.hand.length - right.hand.length)
@@ -85,9 +109,9 @@ export function getStandings(players = []) {
 
 export function getTurnMessage(state = {}) {
   if (!state || typeof state !== 'object') return 'Draw a card'
-  if (state.phase === 'draw') return 'Draw a card'
-  if (state.hasDrawnThisTurn) return 'Discard or build a stack'
-  return 'Draw before you can act'
+  if (state.phase === 'draw') return 'Draw a card or play a stack'
+  if (state.hasDrawnThisTurn) return 'Discard a card'
+  return 'Draw a card or play a stack'
 }
 
 export function countStacksForPlayer(stacks, playerId) {
@@ -101,8 +125,11 @@ export function canOpenNewStackForPlayer(stacks, playerId) {
 
 export function getJokerDisplay(mode = 'seen', card) {
   if (mode === 'blind') return '??'
-  if (!card || !card.rank) return 'A♠'
-  return `${rankAfter(card.rank)}${card.suit ?? '♠'}`
+  return getJokerLabel(card)
+}
+
+export function canSeeJoker(mode, playerId, seenBy = []) {
+  return mode === 'seen' || (mode === 'blind' && seenBy.includes(playerId))
 }
 
 export function isValidStack(cards) {

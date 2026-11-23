@@ -3,14 +3,18 @@
     
     => after the cards are dealt... any random player can start... so the first one to play has 2 option...
         a. either pick a card from the deck and discard one card from his hand into the table...
-        b. at the starting the players has a stack (minimum 3 cards of same suite or same number)... he can throw the stack.... (incase the game is played in blind joker mode then only playing a stack you can see the joker... without playing a stack a player cannot know joker.)
+        b. at the starting the players has a stack (minimum 3 cards of same suite or same number)... he can throw the stack. In blind joker mode, a player learns the joker only after playing a stack.
 
-    => in each players turn they must pick a card from the deck or pick a card from the discarded pile of cards from the previous players and discard a card from their own hand into the pile...
+    => on a turn, a player either draws a card and discards a card from their hand, or plays a stack before drawing. The player cannot draw and play a stack in the same turn.
 
-    => if a player picks a card he cannot discard a stack... he has to discard a card... if he discards a stack he cannot pick a card...
+    => if a player draws a card, they must discard one card and cannot play a stack that turn. If they play a stack, they do not draw a card that turn...
 
 >> Deck:
-    => after the cards are given to the players (8 cards each).. the bottom most cards next suite is the joker... for example there is 8 of club at the bottom so the joker is 9 of any suite(this is in case of blind joker) if it was seen joker then at the last dealer will show the bottom most card and every one will know the joker... (4 jokers per game).. 
+    => after dealing 8 cards to each player, the discard pile starts empty. The first player can draw from the deck or play a stack if they have one; do not deal a starter discard.
+
+    => use a standard 52-card deck with no extra joker cards. The bottom-most card defines the joker rank: if it is 4 of hearts, all four 5s are jokers. There are exactly 4 jokers per game.
+
+    => in seen joker mode, show the bottom card and joker rank to everyone before any stack is played. In blind joker mode, only the player who plays a stack sees the bottom card and learns the joker rank.
 
 
 
@@ -46,8 +50,8 @@
 >> Joker:
     => Joker is the substitute of all the cards... we can play it as substitute of any cards to create a stack or discard.
 
-    => for example: 9 JOKER J, A 2 JOKER, 4 4 JOKER...
+    => the four cards of the joker rank substitute for any card when forming a stack.
 
 
 >> Turn Logic:
-    => in each players turn a player can either pick a card from the deck or from the discarded pile, and discard a card from his hand... or throw a stack and see the joker(no one else sees it). after that next players turn...
+    => in each players turn a player can either pick a card from the deck or from the discarded pile and discard a card from their hand, or play a stack before drawing. In blind joker mode, playing a stack reveals the bottom card only to that player. after that next players turn...
