@@ -172,13 +172,18 @@ function getPlayerInitials(name) {
   return (words.length > 1 ? words.slice(0, 2).map((word) => word[0]).join('') : name.slice(0, 2)).toUpperCase()
 }
 
+function createPlayerId() {
+  const id = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
+  return `player-${id.slice(0, 8)}`
+}
+
 function App() {
   const [screen, setScreen] = useState('landing')
   const [playerCount, setPlayerCount] = useState(4)
   const [singlePlayerCount, setSinglePlayerCount] = useState(2)
   const [singlePlayerJokerMode, setSinglePlayerJokerMode] = useState('blind')
   const [jokerMode, setJokerMode] = useState('seen')
-  const [playerId] = useState(() => `player-${crypto.randomUUID().slice(0, 8)}`)
+  const [playerId] = useState(createPlayerId)
   const [playerName, setPlayerName] = useState('')
   const playerNameRef = useRef(playerName)
   const [roomCode, setRoomCode] = useState(() => new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase() || 'NOVA-4821')
