@@ -25,3 +25,11 @@ test('websocket URL honors an explicitly configured server endpoint', () => {
     'wss://realtime.example.com/socket',
   )
 })
+
+test('production requires an explicitly configured websocket endpoint', () => {
+  assert.equal(getWebSocketUrl({ protocol: 'https:', hostname: 'fiss.vercel.app' }, undefined, true), null)
+  assert.equal(
+    getWebSocketUrl({ protocol: 'https:', hostname: 'fiss.vercel.app' }, 'wss://realtime.example.com', true),
+    'wss://realtime.example.com',
+  )
+})

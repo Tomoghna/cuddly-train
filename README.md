@@ -12,7 +12,13 @@ npm run dev
 ```
 
 The client runs at `http://localhost:5173` and the realtime server runs at `http://localhost:3001`.
-The client connects to the current hostname on port `3001` by default. When the realtime server uses another address, set `VITE_WS_URL` to its WebSocket URL (for example, `wss://realtime.example.com`).
+Locally, the client connects to the current hostname on port `3001` by default. When the realtime server uses another address, set `VITE_WS_URL` to its WebSocket URL (for example, `wss://realtime.example.com`).
+
+## Deploy to Vercel
+
+Vercel can host the Vite frontend, but this project's multiplayer server (`server/index.js`) is a long-running WebSocket server and must run separately as a Node web service. Deploy the repository's server on a host that supports persistent WebSocket connections, using `npm install` as the build command and `npm run dev:server` as the start command. The service must expose its assigned `PORT`; its `/` endpoint is a health check.
+
+Then add `VITE_WS_URL` to the Vercel project's environment variables, set it to the realtime service's secure WebSocket URL (for example, `wss://fiss-realtime.example.com`), and redeploy the frontend so Vite includes the value in the build. Do not use the Vercel frontend URL or append port `3001` unless your realtime service is actually reachable there. Production builds without `VITE_WS_URL` show “Server URL not set” instead of retrying an invalid endpoint.
 
 Useful individual commands:
 

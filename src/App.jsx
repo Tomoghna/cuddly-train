@@ -234,7 +234,7 @@ function App() {
     connected: 'Live',
     reconnecting: `Reconnecting${reconnectAttempt ? ` (${reconnectAttempt})` : ''}`,
     offline: 'Offline',
-    error: 'Connection error',
+    error: import.meta.env.PROD && !import.meta.env.VITE_WS_URL ? 'Server URL not set' : 'Connection error',
   }[connectionStatus]
   useEffect(() => {
     if (!toast) return undefined
@@ -394,8 +394,14 @@ function App() {
       if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) return
       setConnectionStatus(retryCount === 0 ? 'connecting' : 'reconnecting')
       joinedRef.current = false
+      const webSocketUrl = getWebSocketUrl(window.location, import.meta.env.VITE_WS_URL, import.meta.env.PROD)
+      if (!webSocketUrl) {
+        retryStopped = true
+        setConnectionStatus('error')
+        return
+      }
       try {
-        socket = new WebSocket(getWebSocketUrl(window.location, import.meta.env.VITE_WS_URL))
+        socket = new WebSocket(webSocketUrl)
       } catch {
         socketRef.current = null
         scheduleReconnect()
