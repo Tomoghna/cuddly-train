@@ -30,7 +30,7 @@
 
     => a player may add one or more cards to any compatible existing stack only after they have played at least one stack of their own.
 
-    => when extending a sequence, lower cards are added on the left and higher cards on the right. Players choose the compatible stack and available side; same-rank stacks may be extended on either side.
+    => a player may insert cards at any position in a compatible stack if the resulting stack remains valid. Jokers may fill missing sequence ranks, including between existing cards.
 
 
 

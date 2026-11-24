@@ -16,10 +16,11 @@ import {
   canSeeJoker,
   canDiscardThisTurn,
   canPlayStackThisTurn,
-  canExtendStackOnSide,
+  canInsertCardsAtIndex,
   canOpenNewStackForPlayer,
   canPlayerAct,
   addCardsToStack,
+  insertCardsAtIndex,
   reshuffleDiscardIntoDeck,
   getRelativeSeat,
   getJokerLabel,
@@ -37,7 +38,7 @@ import './App.css'
 
 const palette = ['mint', 'violet', 'amber', 'rose']
 const INITIAL_HAND_SIZE = 8
-const TURN_DURATION_SECONDS = 30
+const TURN_DURATION_SECONDS = 90
 const DEAL_CARD_INTERVAL_MS = 140
 const DEAL_FLIGHT_DURATION_MS = 560
 
@@ -249,7 +250,6 @@ function App() {
   const [isDiscardDropActive, setIsDiscardDropActive] = useState(false)
   const [isJokerPeekOpen, setIsJokerPeekOpen] = useState(false)
   const [selectedStackIndex, setSelectedStackIndex] = useState(null)
-  const [selectedStackSide, setSelectedStackSide] = useState('left')
   const [toast, setToast] = useState('')
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
@@ -647,13 +647,13 @@ function App() {
         const nextStacks = [...game.stacks]
         if (Number.isInteger(payload.stackIndex)) {
           const existingStack = nextStacks[payload.stackIndex]
-          if (!existingStack || !canExtendStackOnSide(existingStack.cards, stackCards, payload.side)) {
-            setToast('Those cards cannot extend the selected stack.')
+          if (!existingStack || !canInsertCardsAtIndex(existingStack.cards, stackCards, payload.insertIndex)) {
+            setToast('Those cards cannot be inserted at that position in the selected stack.')
             return false
           }
           nextStacks[payload.stackIndex] = {
             ...existingStack,
-            cards: addCardsToStack(existingStack.cards, stackCards, payload.side),
+            cards: insertCardsAtIndex(existingStack.cards, stackCards, payload.insertIndex),
           }
         } else {
           if (stackCards.length < 3 || !isValidStack(stackCards) || !canOpenNewStackForPlayer(nextStacks, playerId)) {
@@ -748,12 +748,10 @@ function App() {
   }
 
   const toggleCardSelection = (cardId) => {
-    setSelectedStackIndex(null)
-    setSelectedCardIds((current) =>
-      current.includes(cardId)
-        ? current.filter((id) => id !== cardId)
-        : [...current, cardId],
-    )
+    const nextCardIds = selectedCardIds.includes(cardId)
+      ? selectedCardIds.filter((id) => id !== cardId)
+      : [...selectedCardIds, cardId]
+    setSelectedCardIds(nextCardIds)
   }
 
   const drawFromDeck = () => {
@@ -775,7 +773,7 @@ function App() {
   const autoDiscardTimedOutTurn = () => {
     if (!game || !shouldRunTurnTimer || currentPlayer?.id !== playerId) return
     if (game.phase !== 'draw' && (game.phase !== 'play' || !game.hasDrawnThisTurn)) return
-    const cardToDiscard = currentHand[0]
+    const cardToDiscard = currentHand[Math.floor(Math.random() * currentHand.length)]
     if (!cardToDiscard) {
       setToast('No card is available to discard.')
       return
@@ -892,7 +890,7 @@ function App() {
     discardCard(selectedCardIds[0])
   }
 
-  const playSelectedStack = (extensionSide = selectedStackSide, cardIds = selectedCardIds, stackIndex = selectedStackIndex) => {
+  const playSelectedStack = (cardIds = selectedCardIds, stackIndex = selectedStackIndex, insertIndex) => {
     if (!game || !canPlayStackThisTurn(game)) {
       setToast('Play a stack before drawing a card.')
       return
@@ -910,18 +908,25 @@ function App() {
     const existingStack = hasPlayedStack && Number.isInteger(stackIndex)
       ? game.stacks[stackIndex]
       : null
+    const insertionIndex = existingStack
+      ? Number.isInteger(insertIndex)
+        ? insertIndex
+        : Array.from({ length: existingStack.cards.length + 1 }, (_, index) => index)
+          .find((index) => canInsertCardsAtIndex(existingStack.cards, stackCards, index))
+      : null
     const canExtendSelectedStack = !jokerUnknown
       && existingStack
-      && canExtendStackOnSide(existingStack.cards, stackCards, extensionSide)
+      && Number.isInteger(insertionIndex)
+      && canInsertCardsAtIndex(existingStack.cards, stackCards, insertionIndex)
 
     if (existingStack && !canExtendSelectedStack) {
-      setToast('Those cards cannot extend the selected side of that stack.')
+      setToast('Those cards cannot be inserted at that position in the selected stack.')
       return
     }
 
     if (stackCards.length < 3 && !canExtendSelectedStack) {
       if (hasPlayedStack) {
-        setToast('Select a compatible stack and side, or at least 3 cards for a new stack.')
+        setToast('Select a compatible insertion point, or at least 3 cards for a new stack.')
       } else {
         setToast('Select at least 3 cards to make a new stack.')
       }
@@ -940,7 +945,7 @@ function App() {
 
     const payload = {
       cardIds,
-      ...(canExtendSelectedStack ? { stackIndex, side: extensionSide } : {}),
+      ...(canExtendSelectedStack ? { stackIndex, insertIndex: insertionIndex } : {}),
     }
     if (!sendAction('play_stack', payload)) return
     if (game.isSinglePlayer && game.jokerMode === 'blind') {
@@ -953,7 +958,7 @@ function App() {
     setSelectedCardIds([])
     setSelectedStackIndex(null)
     if (canExtendSelectedStack) {
-      setToast(`Cards added to the ${extensionSide} side of the stack.`)
+      setToast('Cards inserted into the stack.')
     } else if (jokerUnknown) {
       setToast('Stack played. The joker is now revealed to you.')
     } else {
@@ -971,7 +976,7 @@ function App() {
     event.preventDefault()
     event.stopPropagation()
     const cardIds = getDroppedCardIds(event)
-    if (cardIds.length > 0) playSelectedStack(selectedStackSide, cardIds, null)
+    if (cardIds.length > 0) playSelectedStack(cardIds, null)
     setIsTableDropActive(false)
     setIsDiscardDropActive(false)
     setDropTargetStackIndex(null)
@@ -984,10 +989,13 @@ function App() {
     const stack = game?.stacks[stackIndex]
     const candidateCards = currentHand.filter((card) => cardIds.includes(card.id))
     if (stack && cardIds.length > 0) {
-      const side = ['left', 'right'].find((candidateSide) =>
-        canExtendStackOnSide(stack.cards, candidateCards, candidateSide),
-      ) ?? 'left'
-      playSelectedStack(side, cardIds, stackIndex)
+      const insertIndex = Array.from({ length: stack.cards.length + 1 }, (_, index) => index)
+        .find((index) => canInsertCardsAtIndex(stack.cards, candidateCards, index))
+      if (Number.isInteger(insertIndex)) {
+        playSelectedStack(cardIds, stackIndex, insertIndex)
+      } else {
+        setToast('Those cards cannot be inserted into the selected stack.')
+      }
     }
     setIsTableDropActive(false)
     setIsDiscardDropActive(false)
@@ -1238,8 +1246,11 @@ function App() {
   const selectedCards = currentHand.filter((card) => selectedCardIds.includes(card.id))
   const hasPlayedStack = hasPlayerPlayedStack(game?.stacks, myPlayer?.id)
   const selectedStack = Number.isInteger(selectedStackIndex) ? game?.stacks[selectedStackIndex] : null
-  const selectedCardsExtendStack = hasPlayedStack
-    && Boolean(selectedStack && canExtendStackOnSide(selectedStack.cards, selectedCards, selectedStackSide))
+  const selectedStackInsertionIndexes = hasPlayedStack && selectedStack
+    ? Array.from({ length: selectedStack.cards.length + 1 }, (_, index) => index)
+      .filter((index) => canInsertCardsAtIndex(selectedStack.cards, selectedCards, index))
+    : []
+  const selectedCardsExtendStack = selectedStackInsertionIndexes.length > 0
 
   return (
     <main className="app-shell">
@@ -1645,11 +1656,11 @@ function App() {
                   {game.stacks.map((stack, stackIndex) => {
                     const owner = game.players.find((player) => player.id === stack.ownerId)
                     const ownerName = owner?.id === playerId ? 'You' : owner?.name ?? 'Unknown player'
-                    const canExtendLeft = hasPlayedStack && selectedCards.length > 0
-                      && canExtendStackOnSide(stack.cards, selectedCards, 'left')
-                    const canExtendRight = hasPlayedStack && selectedCards.length > 0
-                      && canExtendStackOnSide(stack.cards, selectedCards, 'right')
-                    const canSelectStack = canExtendLeft || canExtendRight
+                    const validInsertionIndexes = hasPlayedStack
+                      ? Array.from({ length: stack.cards.length + 1 }, (_, index) => index)
+                        .filter((index) => canInsertCardsAtIndex(stack.cards, selectedCards, index))
+                      : []
+                    const canSelectStack = validInsertionIndexes.length > 0
                     const isSelectedStack = selectedStackIndex === stackIndex
 
                     return (
@@ -1673,20 +1684,19 @@ function App() {
                           type="button"
                           aria-label={`Choose ${ownerName}'s stack`}
                           aria-pressed={isSelectedStack}
-                          disabled={!canSelectStack && !isSelectedStack}
+                          disabled={!canSelectStack && !isSelectedStack && !(hasPlayedStack && selectedCards.length === 0)}
                           onClick={() => {
                             if (isSelectedStack) {
                               setSelectedStackIndex(null)
                             } else {
                               setSelectedStackIndex(stackIndex)
-                              setSelectedStackSide(canExtendLeft ? 'left' : 'right')
                             }
                           }}
                         >
                           <span className="table-stack-player">
                             <span className={`stack-player-marker avatar-${owner?.color ?? 'mint'}`}>{owner?.initials ?? '?'}</span>
                             <span className="stack-player-name">{ownerName}</span>
-                            <span className="stack-target-label">{isSelectedStack ? 'SELECTED' : canSelectStack ? 'CHOOSE' : ''}</span>
+                            <span className="stack-target-label">{isSelectedStack ? 'SELECTED' : canSelectStack || (!selectedCards.length && hasPlayedStack) ? 'CHOOSE' : ''}</span>
                           </span>
                           <span className="stack-mini-cards">
                             {stack.cards.map((card) => (
@@ -1697,23 +1707,27 @@ function App() {
                           </span>
                         </button>
                         {isSelectedStack && (
-                          <div className="stack-side-controls" role="group" aria-label="Choose which side to extend">
-                            <button
-                              className="stack-side-button"
-                              type="button"
-                              disabled={!canExtendLeft}
-                              onClick={() => playSelectedStack('left')}
-                            >
-                              Extend left
-                            </button>
-                            <button
-                              className="stack-side-button"
-                              type="button"
-                              disabled={!canExtendRight}
-                              onClick={() => playSelectedStack('right')}
-                            >
-                              Extend right
-                            </button>
+                          <div className="stack-side-controls" role="group" aria-label="Choose where to insert cards">
+                            {Array.from({ length: stack.cards.length + 1 }, (_, insertIndex) => {
+                              const label = insertIndex === 0
+                                ? 'Start'
+                                : insertIndex === stack.cards.length
+                                  ? 'End'
+                                  : `${stack.cards[insertIndex - 1].rank}-${stack.cards[insertIndex].rank}`
+                              const eligible = validInsertionIndexes.includes(insertIndex)
+                              return (
+                                <button
+                                  className="stack-side-button"
+                                  type="button"
+                                  key={insertIndex}
+                                  disabled={!eligible}
+                                  aria-label={`Insert ${selectedCards.length} selected card${selectedCards.length === 1 ? '' : 's'} ${insertIndex === 0 ? 'before the first card' : insertIndex === stack.cards.length ? 'after the last card' : `between ${stack.cards[insertIndex - 1].rank} and ${stack.cards[insertIndex].rank}`}`}
+                                  onClick={() => playSelectedStack(selectedCardIds, stackIndex, insertIndex)}
+                                >
+                                  {label}
+                                </button>
+                              )
+                            })}
                           </div>
                         )}
                         {canSelectStack && !isSelectedStack && <span className="stack-choice-hint">Select this stack</span>}

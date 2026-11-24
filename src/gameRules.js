@@ -113,12 +113,95 @@ export function canExtendStackOnSide(existing = [], candidate = [], side) {
   return Math.min(...nextValues) > Math.max(...baseValues)
 }
 
+function getCandidateOrders(candidate) {
+  const nonJokers = orderStackCards(candidate.filter((card) => !card.isJoker && card.rank !== 'JOKER'))
+  const jokers = candidate.filter((card) => card.isJoker || card.rank === 'JOKER')
+  const orders = []
+
+  const interleave = (rankIndex, jokerIndex, ordered) => {
+    if (rankIndex === nonJokers.length && jokerIndex === jokers.length) {
+      orders.push(ordered)
+      return
+    }
+    if (jokerIndex < jokers.length) {
+      interleave(rankIndex, jokerIndex + 1, [...ordered, jokers[jokerIndex]])
+    }
+    if (rankIndex < nonJokers.length) {
+      interleave(rankIndex + 1, jokerIndex, [...ordered, nonJokers[rankIndex]])
+    }
+  }
+
+  interleave(0, 0, [])
+  return orders
+}
+
+function getValidStackInsertion(existing = [], candidate = [], index) {
+  if (
+    !Number.isInteger(index)
+    || index < 0
+    || index > existing.length
+    || !canExtendStack(existing, candidate)
+  ) {
+    return null
+  }
+
+  for (const orderedCandidate of getCandidateOrders(candidate)) {
+    const merged = [
+      ...existing.slice(0, index),
+      ...orderedCandidate,
+      ...existing.slice(index),
+    ]
+    if (!isValidStack(merged)) continue
+
+    const nonJokers = merged
+      .map((card, cardIndex) => ({ card, cardIndex }))
+      .filter(({ card }) => !card.isJoker && card.rank !== 'JOKER')
+    if (new Set(nonJokers.map(({ card }) => card.rank)).size === 1) return merged
+    if (new Set(nonJokers.map(({ card }) => card.suit)).size !== 1) continue
+
+    const isInSequenceOrder = nonJokers.every(({ card, cardIndex }, indexInSequence) => {
+      if (indexInSequence === 0) return true
+      const previous = nonJokers[indexInSequence - 1]
+      return rankValues[card.rank] - rankValues[previous.card.rank] === cardIndex - previous.cardIndex
+    })
+    if (isInSequenceOrder) return merged
+  }
+
+  return null
+}
+
+export function canInsertCardsAtIndex(existing = [], candidate = [], index) {
+  return getValidStackInsertion(existing, candidate, index) !== null
+}
+
+export function insertCardsAtIndex(existing = [], candidate = [], index) {
+  return getValidStackInsertion(existing, candidate, index)
+}
+
 export function orderStackCards(cards = []) {
   const nonJokers = cards.filter((card) => !card.isJoker && card.rank !== 'JOKER')
   const sameSuit = new Set(nonJokers.map((card) => card.suit)).size === 1
   const sameRank = new Set(nonJokers.map((card) => card.rank)).size === 1
   if (!sameSuit || sameRank) return [...cards]
-  return [...cards].sort((left, right) => (rankValues[left.rank] ?? 0) - (rankValues[right.rank] ?? 0))
+
+  const orderedNonJokers = [...nonJokers].sort((left, right) => rankValues[left.rank] - rankValues[right.rank])
+  const jokers = cards.filter((card) => card.isJoker || card.rank === 'JOKER')
+  const ordered = []
+  let jokerIndex = 0
+
+  orderedNonJokers.forEach((card, index) => {
+    const previous = orderedNonJokers[index - 1]
+    if (previous) {
+      const missingRanks = rankValues[card.rank] - rankValues[previous.rank] - 1
+      for (let missing = 0; missing < missingRanks && jokerIndex < jokers.length; missing += 1) {
+        ordered.push(jokers[jokerIndex])
+        jokerIndex += 1
+      }
+    }
+    ordered.push(card)
+  })
+
+  return [...ordered, ...jokers.slice(jokerIndex)]
 }
 
 export function addCardsToStack(existing = [], candidate = [], side = 'right') {

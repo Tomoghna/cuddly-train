@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { addCardsToStack, canExtendStackOnSide, canSeeJoker, getJokerLabel, hasPlayerPlayedStack, isValidStack, markJokers, orderStackCards, ranks, reshuffleDiscardIntoDeck, suits } from '../src/gameRules.js'
+import { addCardsToStack, canExtendStackOnSide, canInsertCardsAtIndex, canSeeJoker, getJokerLabel, hasPlayerPlayedStack, insertCardsAtIndex, isValidStack, markJokers, orderStackCards, ranks, reshuffleDiscardIntoDeck, suits } from '../src/gameRules.js'
 
 const rooms = new Map()
 const reconnectGraceMs = Math.max(1_000, Number(process.env.FISS_RECONNECT_MS || 30_000))
@@ -364,19 +364,24 @@ wss.on('connection', (socket) => {
             reject(socket, 'STACK_REQUIRED', 'Play your own stack before adding cards to another player\'s stack.')
             return
           }
-          const side = message.payload.side
-          if (!['left', 'right'].includes(side)) {
-            reject(socket, 'INVALID_STACK', 'Choose the left or right side of the stack.')
-            return
-          }
           existingStack = room.stacks[message.payload.stackIndex]
-          if (!canExtendStackOnSide(existingStack.cards, stackCards, side)) {
-            reject(socket, 'INVALID_STACK', 'Those cards cannot extend that side of the selected stack.')
+          if (message.payload.insertIndex !== undefined) {
+            if (
+              message.payload.side !== undefined
+              || !Number.isInteger(message.payload.insertIndex)
+              || !canInsertCardsAtIndex(existingStack.cards, stackCards, message.payload.insertIndex)
+            ) {
+              reject(socket, 'INVALID_STACK', 'Those cards cannot be inserted at that position in the selected stack.')
+              return
+            }
+          } else if (!['left', 'right'].includes(message.payload.side)
+            || !canExtendStackOnSide(existingStack.cards, stackCards, message.payload.side)) {
+            reject(socket, 'INVALID_STACK', 'Those cards cannot extend the selected stack.')
             return
           }
         } else {
-          if (message.payload.side !== undefined) {
-            reject(socket, 'INVALID_STACK', 'Choose a stack before selecting an extension side.')
+          if (message.payload.side !== undefined || message.payload.insertIndex !== undefined) {
+            reject(socket, 'INVALID_STACK', 'Choose a stack before selecting an insertion position.')
             return
           }
           if (stackCards.length < 3 || !isValidStack(stackCards)) {
@@ -389,7 +394,9 @@ wss.on('connection', (socket) => {
           }
         }
         if (existingStack) {
-          existingStack.cards = addCardsToStack(existingStack.cards, stackCards, message.payload.side)
+          existingStack.cards = Number.isInteger(message.payload.insertIndex)
+            ? insertCardsAtIndex(existingStack.cards, stackCards, message.payload.insertIndex)
+            : addCardsToStack(existingStack.cards, stackCards, message.payload.side)
         } else {
           room.stacks.push({ ownerId: playerId, cards: orderStackCards(stackCards) })
         }

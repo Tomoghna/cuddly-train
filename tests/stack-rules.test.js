@@ -14,6 +14,9 @@ import {
   canExtendStack,
   canExtendStackOnSide,
   addCardsToStack,
+  canInsertCardsAtIndex,
+  insertCardsAtIndex,
+  orderStackCards,
   isStackComplete,
   advanceTurnIndex,
   getRelativeSeat,
@@ -181,6 +184,29 @@ test('validates left and right sequence extensions and inserts cards at the chos
   assert.equal(canExtendStackOnSide(existing, [higherCard], 'right'), true)
   assert.equal(canExtendStackOnSide(existing, [higherCard], 'left'), false)
   assert.deepEqual(addCardsToStack(existing, lowerCards, 'left').map((card) => card.rank), ['2', '3', '4', '5', '6'])
+})
+
+test('allows a joker to fill an internal sequence position when opening or extending a stack', () => {
+  const ace = { id: 'ace', rank: 'A', suit: '♠' }
+  const two = { id: 'two', rank: '2', suit: '♠' }
+  const four = { id: 'four', rank: '4', suit: '♠' }
+  const joker = { id: 'joker', rank: '6', suit: '♥', isJoker: true }
+
+  assert.equal(isValidStack([ace, two, joker, four]), true)
+  assert.deepEqual(
+    orderStackCards([four, joker, ace, two]).map((card) => card.id),
+    ['ace', 'two', 'joker', 'four'],
+  )
+
+  const existing = [ace, two, four]
+  assert.equal(canInsertCardsAtIndex(existing, [joker], 2), true)
+  assert.equal(canInsertCardsAtIndex(existing, [joker], 1), false)
+  assert.deepEqual(insertCardsAtIndex(existing, [joker], 2).map((card) => card.id), [
+    'ace',
+    'two',
+    'joker',
+    'four',
+  ])
 })
 
 test('allows a joker to be added to either physical end of a compatible stack', () => {
