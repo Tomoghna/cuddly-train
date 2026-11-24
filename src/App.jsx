@@ -627,7 +627,7 @@ function App() {
           phase: 'draw',
           hasDrawnThisTurn: false,
           winner,
-          reshuffleVersion,
+          reshuffleVersion: game.reshuffleVersion ?? 0,
         })
         if (winner) setScreen('winner')
         return true
