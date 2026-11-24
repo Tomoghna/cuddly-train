@@ -41,6 +41,7 @@ const INITIAL_HAND_SIZE = 8
 const TURN_DURATION_SECONDS = 90
 const DEAL_CARD_INTERVAL_MS = 140
 const DEAL_FLIGHT_DURATION_MS = 560
+const MULTIPLAYER_SESSION_KEY = 'fiss.multiplayer-session'
 
 const pipLayouts = {
   A: [[50, 50]],
@@ -57,23 +58,50 @@ const pipLayouts = {
 
 function CourtCardArt({ rank, suit }) {
   const suitColor = suit === '♥' || suit === '♦' ? '#b9343b' : '#263f36'
-  const crownColor = rank === 'K' ? '#d5a744' : rank === 'Q' ? '#bd7c9a' : '#688e79'
+  const robeColor = rank === 'K' ? '#315944' : rank === 'Q' ? '#73506a' : '#3c6178'
+  const trimColor = rank === 'K' ? '#d5a744' : rank === 'Q' ? '#cf9d5a' : '#7fb4a0'
 
   return (
     <svg className={`court-art court-${rank.toLowerCase()}`} viewBox="0 0 64 76" aria-hidden="true">
-      <rect x="2" y="2" width="60" height="72" rx="7" fill="#f3e7c9" stroke="#b89961" strokeWidth="1.5" />
-      <path d="M7 7h50v62H7z" fill="none" stroke="#d4bd8e" strokeWidth="1" />
-      <path d="M10 10h44v26H10z" fill={suitColor} opacity=".12" />
-      <path d="M15 57c2-10 8-15 17-15s15 5 17 15v8H15z" fill={crownColor} stroke="#765b43" strokeWidth="1.5" />
-      <path d="M20 31c0-10 5-16 12-16s12 6 12 16v8c0 8-5 13-12 13s-12-5-12-13z" fill="#f1c99b" stroke="#765b43" strokeWidth="1.5" />
-      <path d="M18 29 20 17l7 5 5-10 6 10 8-5 2 15-5-6-4 4-5-5-5 5-5-4z" fill={crownColor} stroke="#765b43" strokeWidth="1.5" />
-      <circle cx="27" cy="33" r="1.3" fill="#29332e" />
-      <circle cx="37" cy="33" r="1.3" fill="#29332e" />
-      <path d="M28 42q4 3 8 0" fill="none" stroke="#8b4e47" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M17 57 9 49m38 0-8 8" fill="none" stroke="#765b43" strokeWidth="2" />
-      <path d="M32 57v9" stroke="#f3e7c9" strokeWidth="1.5" />
-      <text x="32" y="72" textAnchor="middle" fill={suitColor} fontSize="8" fontWeight="700">{suit}</text>
-      <path d="M11 12 53 64" stroke="#fff" strokeWidth="1" opacity=".35" />
+      <path d="M9 70c2-13 9-21 23-22 14 1 21 9 23 22z" fill={robeColor} stroke="#634c39" strokeWidth="1.5" />
+      <path d="m25 49 7 11 7-11-3-3h-8z" fill="#f2e7d0" stroke="#634c39" strokeWidth="1" />
+      <path d="M18 30c-3-9 2-17 10-19 9-2 17 4 18 13l-2 26-8 5H25l-7-7z" fill="#49352f" />
+      {rank === 'Q' && <path d="M20 34 15 62l10-7 3-13zm24 0 5 28-10-7-3-13z" fill="#49352f" />}
+      <path d="M20 25c1-8 23-10 24 1v13c0 9-5 15-12 15s-12-6-12-15z" fill="#f1c99b" stroke="#765b43" strokeWidth="1.2" />
+      <path d="M24 33q3-2 6 0m4 0q3-2 6 0" fill="none" stroke="#49352f" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="27" cy="35" r="1" fill="#29332e" />
+      <circle cx="37" cy="35" r="1" fill="#29332e" />
+      <path d="m32 36-2 6h4" fill="none" stroke="#ad775d" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M29 46q3 2 6 0" fill="none" stroke="#8b4e47" strokeWidth="1.3" strokeLinecap="round" />
+      {rank === 'K' && (
+        <>
+          <path d="M23 43q4 3 8 0 4 3 8 0l-2 9-6 5-6-5z" fill="#604238" />
+          <path d="M24 43q4 2 8 0 4 2 8 0" fill="none" stroke="#332c28" strokeWidth="2" strokeLinecap="round" />
+        </>
+      )}
+      {rank === 'K' && (
+        <g>
+          <path d="m18 23 2-11 8 6 4-10 5 10 8-6 2 12z" fill={trimColor} stroke="#765b43" strokeWidth="1.3" strokeLinejoin="round" />
+          <circle cx="32" cy="16" r="2" fill={suitColor} />
+        </g>
+      )}
+      {rank === 'Q' && (
+        <g>
+          <path d="m21 22 3-9 8 6 8-6 3 9z" fill={trimColor} stroke="#765b43" strokeWidth="1.3" strokeLinejoin="round" />
+          <circle cx="32" cy="17" r="2" fill={suitColor} />
+          <circle cx="18" cy="42" r="2" fill={trimColor} />
+          <circle cx="46" cy="42" r="2" fill={trimColor} />
+        </g>
+      )}
+      {rank === 'J' && (
+        <g>
+          <path d="M18 25q3-12 14-12t14 12l-5 3H23z" fill={trimColor} stroke="#765b43" strokeWidth="1.3" />
+          <path d="M31 13q-2-9 5-11 0 7 7 8-5 5-12 3" fill="#d8b66e" stroke="#765b43" strokeWidth="1.2" />
+          <path d="m22 25 10-5 10 5" fill="none" stroke="#f4e3ba" strokeWidth="1.3" />
+        </g>
+      )}
+      <path d="M12 66h40" stroke={trimColor} strokeWidth="2" opacity=".75" />
+      <text x="32" y="75" textAnchor="middle" fill={suitColor} fontSize="12" fontWeight="800">{suit}</text>
     </svg>
   )
 }
@@ -229,23 +257,77 @@ function createPlayerId() {
   return `player-${id.slice(0, 8)}`
 }
 
+function readMultiplayerSession() {
+  try {
+    const stored = window.localStorage.getItem(MULTIPLAYER_SESSION_KEY)
+    if (!stored) return null
+    const session = JSON.parse(stored)
+    if (
+      typeof session?.playerId === 'string'
+      && /^[a-z0-9-]{1,64}$/i.test(session.playerId)
+      && typeof session?.playerName === 'string'
+      && session.playerName.trim().length > 0
+      && session.playerName.trim().length <= 24
+      && typeof session?.roomCode === 'string'
+      && /^[a-z0-9-]{1,24}$/i.test(session.roomCode)
+    ) {
+      return {
+        playerId: session.playerId,
+        playerName: session.playerName.trim(),
+        roomCode: session.roomCode.toUpperCase(),
+      }
+    }
+    window.localStorage.removeItem(MULTIPLAYER_SESSION_KEY)
+    return null
+  } catch (error) {
+    console.warn('Unable to restore the previous multiplayer room.', error)
+    return null
+  }
+}
+
+function saveMultiplayerSession(session) {
+  try {
+    window.localStorage.setItem(MULTIPLAYER_SESSION_KEY, JSON.stringify(session))
+  } catch (error) {
+    console.warn('Unable to save the multiplayer room for reload recovery.', error)
+  }
+}
+
+function clearMultiplayerSession() {
+  try {
+    window.localStorage.removeItem(MULTIPLAYER_SESSION_KEY)
+  } catch (error) {
+    console.warn('Unable to clear the saved multiplayer room.', error)
+  }
+}
+
 function App() {
-  const [screen, setScreen] = useState('landing')
+  const roomFromUrl = new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase()
+  const [savedSession] = useState(() => {
+    const session = readMultiplayerSession()
+    return session && (!roomFromUrl || session.roomCode === roomFromUrl) ? session : null
+  })
+  const [screen, setScreen] = useState(() => savedSession ? 'lobby' : 'landing')
   const [playerCount, setPlayerCount] = useState(4)
   const [singlePlayerCount, setSinglePlayerCount] = useState(2)
   const [singlePlayerJokerMode, setSinglePlayerJokerMode] = useState('blind')
   const [jokerMode, setJokerMode] = useState('seen')
-  const [playerId] = useState(createPlayerId)
-  const [playerName, setPlayerName] = useState('')
+  const [playerId] = useState(() => savedSession?.playerId ?? createPlayerId())
+  const [playerName, setPlayerName] = useState(() => savedSession?.playerName ?? '')
   const playerNameRef = useRef(playerName)
-  const [roomCode, setRoomCode] = useState(() => new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase() || 'NOVA-4821')
+  const [roomCode, setRoomCode] = useState(() => savedSession?.roomCode || roomFromUrl || 'NOVA-4821')
   const [roomCodeInput, setRoomCodeInput] = useState(roomCode)
   const [joinCode, setJoinCode] = useState('')
-  const [game, setGame] = useState(() => createGameState(4, 'seen', { playerId }))
+  const [game, setGame] = useState(() => createGameState(4, 'seen', {
+    playerId,
+    playerName: savedSession?.playerName,
+    room: savedSession?.roomCode,
+  }))
   const [selectedCardIds, setSelectedCardIds] = useState([])
   const [draggedCardId, setDraggedCardId] = useState(null)
   const [dropSlotIndex, setDropSlotIndex] = useState(null)
   const [dropTargetStackIndex, setDropTargetStackIndex] = useState(null)
+  const [dropTargetStackInsertIndex, setDropTargetStackInsertIndex] = useState(null)
   const [isTableDropActive, setIsTableDropActive] = useState(false)
   const [isDiscardDropActive, setIsDiscardDropActive] = useState(false)
   const [isJokerPeekOpen, setIsJokerPeekOpen] = useState(false)
@@ -263,8 +345,10 @@ function App() {
   const [reshuffleAnimation, setReshuffleAnimation] = useState(false)
   const [isDealing, setIsDealing] = useState(false)
   const handScrollRef = useRef(null)
+  const tableStacksRef = useRef(null)
   const jokerPeekGestureRef = useRef(null)
   const suppressDeckClickRef = useRef(false)
+  const wakeLockRef = useRef(null)
 
   useEffect(() => {
     if (screen !== 'table') return undefined
@@ -278,9 +362,51 @@ function App() {
     }
   }, [screen, game?.players.length])
 
+  useEffect(() => {
+    if (screen !== 'table' || !('wakeLock' in navigator)) return undefined
+
+    let disposed = false
+    const requestWakeLock = async () => {
+      if (disposed || document.visibilityState !== 'visible' || wakeLockRef.current) return
+      try {
+        const wakeLock = await navigator.wakeLock.request('screen')
+        if (disposed || document.visibilityState !== 'visible') {
+          await wakeLock.release()
+          return
+        }
+        wakeLockRef.current = wakeLock
+        wakeLock.addEventListener('release', () => {
+          if (wakeLockRef.current === wakeLock) wakeLockRef.current = null
+        }, { once: true })
+      } catch (error) {
+        console.warn('Screen wake lock is unavailable; the device may turn off the display while the game is open.', error)
+      }
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void requestWakeLock()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    void requestWakeLock()
+    return () => {
+      disposed = true
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      const wakeLock = wakeLockRef.current
+      wakeLockRef.current = null
+      if (wakeLock) {
+        void wakeLock.release().catch((error) => {
+          console.warn('Unable to release the screen wake lock.', error)
+        })
+      }
+    }
+  }, [screen])
+
   const currentPlayer = game?.players[game.activeIndex]
   const myPlayer = game?.players.find((player) => player.id === playerId)
   const currentHand = myPlayer?.hand ?? []
+  const shouldConnectToRoom = !game?.isSinglePlayer
+    && ['lobby', 'table', 'winner'].includes(screen)
+    && playerName.trim().length > 0
 
   useEffect(() => {
     if (screen !== 'table' || !handScrollRef.current) return
@@ -290,6 +416,13 @@ function App() {
       behavior: 'smooth',
     })
   }, [screen, currentHand.length])
+
+  useEffect(() => {
+    if (!Number.isInteger(selectedStackIndex) || !tableStacksRef.current) return
+    const selectedStack = tableStacksRef.current.querySelector(`[data-stack-index="${selectedStackIndex}"]`)
+    selectedStack?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [selectedStackIndex])
+
   const isMyTurn = game?.isSinglePlayer
     ? currentPlayer?.id === playerId
     : serverState.activePlayerId === playerId || (!serverState.activePlayerId && currentPlayer?.id === playerId)
@@ -323,6 +456,8 @@ function App() {
   }, [reshuffleAnimation])
 
   useEffect(() => {
+    if (!shouldConnectToRoom) return undefined
+
     let disposed = false
     let reconnectTimer
     let retryCount = 0
@@ -546,7 +681,7 @@ function App() {
       if (socket) socket.close()
       if (socketRef.current === socket) socketRef.current = null
     }
-  }, [playerId, roomCode])
+  }, [playerId, roomCode, shouldConnectToRoom])
 
   const sendAction = (type, payload = {}) => {
     if (!isMyTurn) {
@@ -714,6 +849,7 @@ function App() {
     setPlayerName(normalizedPlayerName)
     const nextRoomCode = (roomCodeInput || 'NOVA-4821').trim().toUpperCase().replace(/\s+/g, '-')
     const configuration = { playerCount: countOverride, jokerMode: modeOverride }
+    saveMultiplayerSession({ playerId, playerName: normalizedPlayerName, roomCode: nextRoomCode })
     const nextGame = createGameState(countOverride, modeOverride, { playerId, playerName: normalizedPlayerName })
     nextGame.room = nextRoomCode
     setGame(nextGame)
@@ -731,6 +867,12 @@ function App() {
       if (nextRoomCode !== roomCode) setRoomCode(nextRoomCode)
     }
     setScreen('lobby')
+  }
+
+  const leaveMultiplayerRoom = () => {
+    clearMultiplayerSession()
+    setToast('')
+    setScreen('landing')
   }
 
   const openTable = () => {
@@ -972,6 +1114,15 @@ function App() {
     return [...new Set([...selectedCardIds, draggedId])]
   }
 
+  const getStackInsertionIndex = (stackElement, clientX) => {
+    const stackCards = [...stackElement.querySelectorAll('.table-stack-card')]
+    const cardIndex = stackCards.findIndex((card) => {
+      const bounds = card.getBoundingClientRect()
+      return clientX < bounds.left + bounds.width / 2
+    })
+    return cardIndex === -1 ? stackCards.length : cardIndex
+  }
+
   const handleTableDrop = (event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -980,6 +1131,7 @@ function App() {
     setIsTableDropActive(false)
     setIsDiscardDropActive(false)
     setDropTargetStackIndex(null)
+    setDropTargetStackInsertIndex(null)
   }
 
   const handleStackDrop = (event, stackIndex) => {
@@ -988,18 +1140,18 @@ function App() {
     const cardIds = getDroppedCardIds(event)
     const stack = game?.stacks[stackIndex]
     const candidateCards = currentHand.filter((card) => cardIds.includes(card.id))
+    const insertIndex = getStackInsertionIndex(event.currentTarget, event.clientX)
     if (stack && cardIds.length > 0) {
-      const insertIndex = Array.from({ length: stack.cards.length + 1 }, (_, index) => index)
-        .find((index) => canInsertCardsAtIndex(stack.cards, candidateCards, index))
-      if (Number.isInteger(insertIndex)) {
+      if (canInsertCardsAtIndex(stack.cards, candidateCards, insertIndex)) {
         playSelectedStack(cardIds, stackIndex, insertIndex)
       } else {
-        setToast('Those cards cannot be inserted into the selected stack.')
+        setToast('Those cards cannot be inserted at that position in the selected stack.')
       }
     }
     setIsTableDropActive(false)
     setIsDiscardDropActive(false)
     setDropTargetStackIndex(null)
+    setDropTargetStackInsertIndex(null)
   }
 
   const handleDiscardDrop = (event) => {
@@ -1009,6 +1161,7 @@ function App() {
     setIsDiscardDropActive(false)
     setIsTableDropActive(false)
     setDropTargetStackIndex(null)
+    setDropTargetStackInsertIndex(null)
   }
 
   const sortHand = () => {
@@ -1057,12 +1210,14 @@ function App() {
   }
 
   const startSinglePlayer = (countOverride = singlePlayerCount) => {
+    clearMultiplayerSession()
     const seatedGame = createGameState(countOverride, singlePlayerJokerMode, {
       room: 'SOLO-001',
       playerId,
       isSinglePlayer: true,
     })
     setGame(seatedGame)
+    setToast('')
     setIsJokerPeekOpen(false)
     setSelectedCardIds([])
     setSelectedStackIndex(null)
@@ -1425,6 +1580,7 @@ function App() {
               playerNameRef.current = normalizedPlayerName
               setPlayerName(normalizedPlayerName)
               const normalized = (joinCode || roomCode || 'NOVA-4821').trim().toUpperCase().replace(/\s+/g, '-')
+              saveMultiplayerSession({ playerId, playerName: normalizedPlayerName, roomCode: normalized })
               setRoomCodeInput(normalized)
               if (normalized === roomCode && joinedRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
                 sendRoomControl('set_player_name', { name: normalizedPlayerName })
@@ -1447,7 +1603,7 @@ function App() {
       {screen === 'lobby' && game && (
         <section className="lobby-screen">
           <header className="game-header">
-            <button className="game-brand" onClick={() => setScreen('landing')} aria-label="Back to home">F</button>
+            <button className="game-brand" onClick={leaveMultiplayerRoom} aria-label="Back to home">F</button>
             <div className="game-room-title">{game.room}</div>
             <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
               <span className={`status-dot ${isConnected ? 'live' : ''}`} />
@@ -1488,11 +1644,13 @@ function App() {
           <header className="game-header">
             <button className="game-brand" onClick={() => setScreen('lobby')} aria-label="Room lobby">F</button>
             <div className="game-room-title">{game.room}</div>
-            <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
-              <span className={`status-dot ${isConnected ? 'live' : ''}`} />
-              <span>{connectionLabel}</span>
-              {!isConnected && <button className="connection-retry" onClick={() => retryNowRef.current?.()} aria-label="Retry connection"><RefreshCw size={14} /></button>}
-            </div>
+            {!game.isSinglePlayer && (
+              <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
+                <span className={`status-dot ${isConnected ? 'live' : ''}`} />
+                <span>{connectionLabel}</span>
+                {!isConnected && <button className="connection-retry" onClick={() => retryNowRef.current?.()} aria-label="Retry connection"><RefreshCw size={14} /></button>}
+              </div>
+            )}
           </header>
 
           <section className={`game-table${isDealing ? ' is-dealing' : ''}`}>
@@ -1549,6 +1707,7 @@ function App() {
                 setIsTableDropActive(true)
                 setIsDiscardDropActive(false)
                 setDropTargetStackIndex(null)
+                setDropTargetStackInsertIndex(null)
               }}
               onDrop={handleTableDrop}
             >
@@ -1615,6 +1774,7 @@ function App() {
                     setIsDiscardDropActive(true)
                     setIsTableDropActive(false)
                     setDropTargetStackIndex(null)
+                    setDropTargetStackInsertIndex(null)
                   }}
                   onDrop={handleDiscardDrop}
                 >
@@ -1652,7 +1812,13 @@ function App() {
               </div>
 
               {game.stacks.length > 0 && (
-                <div className="table-stacks" aria-label="Played stacks">
+                <div
+                  className="table-stacks"
+                  ref={tableStacksRef}
+                  role="region"
+                  aria-label="Played stacks. Scroll to see all stacks."
+                  tabIndex={0}
+                >
                   {game.stacks.map((stack, stackIndex) => {
                     const owner = game.players.find((player) => player.id === stack.ownerId)
                     const ownerName = owner?.id === playerId ? 'You' : owner?.name ?? 'Unknown player'
@@ -1665,9 +1831,10 @@ function App() {
 
                     return (
                       <div
-                        className={`table-stack${isSelectedStack ? ' selected' : ''}${dropTargetStackIndex === stackIndex ? ' drop-target' : ''}`}
+                        className={`table-stack${isSelectedStack ? ' expanded' : ''}${dropTargetStackIndex === stackIndex ? ' drop-target' : ''}`}
                         role="group"
-                        key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`}
+                        key={`${stack.ownerId ?? 'stack'}-${stackIndex}`}
+                        data-stack-index={stackIndex}
                         aria-label={`Stack played by ${ownerName}`}
                         onDragOver={(event) => {
                           event.preventDefault()
@@ -1675,7 +1842,19 @@ function App() {
                           event.dataTransfer.dropEffect = 'move'
                           setIsTableDropActive(false)
                           setIsDiscardDropActive(false)
-                          setDropTargetStackIndex(stackIndex)
+                          const candidateIds = getDroppedCardIds(event)
+                          const candidateCards = currentHand.filter((card) => candidateIds.includes(card.id))
+                          const insertIndex = getStackInsertionIndex(event.currentTarget, event.clientX)
+                          if (
+                            hasPlayedStack
+                            && (!candidateCards.length || canInsertCardsAtIndex(stack.cards, candidateCards, insertIndex))
+                          ) {
+                            setDropTargetStackIndex(stackIndex)
+                            setDropTargetStackInsertIndex(insertIndex)
+                          } else {
+                            setDropTargetStackIndex(null)
+                            setDropTargetStackInsertIndex(null)
+                          }
                         }}
                         onDrop={(event) => handleStackDrop(event, stackIndex)}
                       >
@@ -1684,7 +1863,7 @@ function App() {
                           type="button"
                           aria-label={`Choose ${ownerName}'s stack`}
                           aria-pressed={isSelectedStack}
-                          disabled={!canSelectStack && !isSelectedStack && !(hasPlayedStack && selectedCards.length === 0)}
+                          aria-expanded={isSelectedStack}
                           onClick={() => {
                             if (isSelectedStack) {
                               setSelectedStackIndex(null)
@@ -1696,45 +1875,48 @@ function App() {
                           <span className="table-stack-player">
                             <span className={`stack-player-marker avatar-${owner?.color ?? 'mint'}`}>{owner?.initials ?? '?'}</span>
                             <span className="stack-player-name">{ownerName}</span>
-                            <span className="stack-target-label">{isSelectedStack ? 'SELECTED' : canSelectStack || (!selectedCards.length && hasPlayedStack) ? 'CHOOSE' : ''}</span>
+                            <span className="stack-target-label">{isSelectedStack ? 'OPEN' : 'TAP TO OPEN'}</span>
                           </span>
-                          <span className="stack-mini-cards">
-                            {stack.cards.map((card) => (
-                              <span className={`stack-mini-card ${card.color === 'red' ? 'red-card' : ''}`} key={card.id}>
-                                {card.rank}<small>{card.suit}</small>
-                              </span>
-                            ))}
-                          </span>
-                        </button>
-                        {isSelectedStack && (
-                          <div className="stack-side-controls" role="group" aria-label="Choose where to insert cards">
-                            {Array.from({ length: stack.cards.length + 1 }, (_, insertIndex) => {
-                              const label = insertIndex === 0
-                                ? 'Start'
-                                : insertIndex === stack.cards.length
-                                  ? 'End'
-                                  : `${stack.cards[insertIndex - 1].rank}-${stack.cards[insertIndex].rank}`
-                              const eligible = validInsertionIndexes.includes(insertIndex)
+                          <span className={`table-stack-cards${dropTargetStackIndex === stackIndex ? ' is-inserting' : ''}${dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === stack.cards.length ? ' drop-at-end' : ''}`}>
+                            {stack.cards.map((card, cardIndex) => {
+                              const fanPosition = stack.cards.length > 1
+                                ? (cardIndex / (stack.cards.length - 1)) * 2 - 1
+                                : 0
                               return (
-                                <button
-                                  className="stack-side-button"
-                                  type="button"
-                                  key={insertIndex}
-                                  disabled={!eligible}
-                                  aria-label={`Insert ${selectedCards.length} selected card${selectedCards.length === 1 ? '' : 's'} ${insertIndex === 0 ? 'before the first card' : insertIndex === stack.cards.length ? 'after the last card' : `between ${stack.cards[insertIndex - 1].rank} and ${stack.cards[insertIndex].rank}`}`}
-                                  onClick={() => playSelectedStack(selectedCardIds, stackIndex, insertIndex)}
+                                <span
+                                  className={`table-stack-card ${card.color === 'red' ? 'red-card' : ''}${dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === cardIndex ? ' insert-before' : ''}`}
+                                  key={card.id}
+                                  style={{
+                                    '--stack-card-index': cardIndex,
+                                    '--stack-card-rotation': `${fanPosition * 11}deg`,
+                                    '--stack-card-lift': `${-9 * (1 - fanPosition ** 2)}px`,
+                                  }}
                                 >
-                                  {label}
-                                </button>
+                                  <CardArtwork card={card} />
+                                </span>
                               )
                             })}
-                          </div>
+                            {dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === stack.cards.length && (
+                              <span className="table-stack-end-slot" aria-hidden="true" />
+                            )}
+                          </span>
+                        </button>
+                        {canSelectStack && !isSelectedStack && (
+                          <span className="stack-choice-hint">Drag cards here to extend</span>
                         )}
-                        {canSelectStack && !isSelectedStack && <span className="stack-choice-hint">Select this stack</span>}
+                        {isSelectedStack && selectedCards.length > 0 && !selectedStackInsertionIndexes.length && (
+                          <span className="stack-choice-hint">Selected cards do not fit this stack</span>
+                        )}
                       </div>
                     )
                   })}
                 </div>
+              )}
+              {game.stacks.length > 2 && (
+                <span className="stack-scroll-hint mobile-scroll-hint" aria-hidden="true">SWIPE TO SEE ALL STACKS</span>
+              )}
+              {game.stacks.length > 4 && (
+                <span className="stack-scroll-hint desktop-scroll-hint" aria-hidden="true">SCROLL TO SEE ALL STACKS</span>
               )}
               <div className="felt-ornament" aria-hidden="true">F</div>
             </div>
@@ -1756,6 +1938,7 @@ function App() {
                   setIsTableDropActive(false)
                   setIsDiscardDropActive(false)
                   setDropTargetStackIndex(null)
+                  setDropTargetStackInsertIndex(null)
                 }}
                 onDrop={(event) => {
                   event.preventDefault()
@@ -1791,6 +1974,7 @@ function App() {
                         setIsTableDropActive(false)
                         setIsDiscardDropActive(false)
                         setDropTargetStackIndex(null)
+                        setDropTargetStackInsertIndex(null)
                       }}
                       onDragOver={(event) => {
                         event.preventDefault()
@@ -1807,6 +1991,7 @@ function App() {
                         setIsTableDropActive(false)
                         setIsDiscardDropActive(false)
                         setDropTargetStackIndex(null)
+                        setDropTargetStackInsertIndex(null)
                       }}
                       onClick={() => toggleCardSelection(card.id)}
                       aria-pressed={selectedCardIds.includes(card.id)}
@@ -1823,7 +2008,7 @@ function App() {
                   <>
                     <button className="action-button secondary-action" onClick={drawFromDiscard} disabled={!canDrawThisTurn || game.discard.length === 0}>Take discard</button>
                     <button className="action-button primary-action" onClick={drawFromDeck} disabled={!canDrawThisTurn}><Layers3 size={17} /> Draw card</button>
-                    <button className="action-button secondary-action" onClick={playSelectedStack} disabled={!canPlayStack || (selectedCardIds.length < 3 && !selectedCardsExtendStack)}>Play stack <span>{selectedCardIds.length || ''}</span></button>
+                    <button className="action-button secondary-action" onClick={() => playSelectedStack()} disabled={!canPlayStack || (selectedCardIds.length < 3 && !selectedCardsExtendStack)}>Play stack <span>{selectedCardIds.length || ''}</span></button>
                   </>
                 ) : (
                   <>
@@ -1843,7 +2028,7 @@ function App() {
       {screen === 'winner' && game && (
         <section className="winner-screen">
           <header className="game-header">
-            <button className="game-brand" onClick={() => setScreen('landing')} aria-label="Back to home">F</button>
+            <button className="game-brand" onClick={leaveMultiplayerRoom} aria-label="Back to home">F</button>
             <div className="game-room-title">{game.room}</div>
             <div className="connection connection-compact is-online">
               <span className="status-dot live" />
@@ -1887,7 +2072,7 @@ function App() {
                 ))}
               </div>
 
-              <button className="primary-button full winner-action" onClick={() => setScreen('landing')}>
+              <button className="primary-button full winner-action" onClick={leaveMultiplayerRoom}>
                 <Crown size={16} /> Back to lobby
               </button>
             </main>

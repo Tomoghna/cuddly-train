@@ -4,7 +4,7 @@ import { WebSocketServer } from 'ws'
 import { addCardsToStack, canExtendStackOnSide, canInsertCardsAtIndex, canSeeJoker, getJokerLabel, hasPlayerPlayedStack, insertCardsAtIndex, isValidStack, markJokers, orderStackCards, ranks, reshuffleDiscardIntoDeck, suits } from '../src/gameRules.js'
 
 const rooms = new Map()
-const reconnectGraceMs = Math.max(1_000, Number(process.env.FISS_RECONNECT_MS || 30_000))
+const reconnectGraceMs = Math.max(1_000, Number(process.env.FISS_RECONNECT_MS || 300_000))
 const port = Number(process.env.PORT || 3001)
 const server = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'application/json' })
