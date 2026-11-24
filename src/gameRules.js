@@ -254,7 +254,7 @@ export function findAiStackMove(hand, stacks = [], playerId, jokerKnown = true) 
         return null
       }
 
-      for (let index = startIndex; index < hand.length; index += 1) {
+      for (let index = startIndex; index < eligibleHand.length; index += 1) {
         const result = search(index + 1, [...selected, index])
         if (result) return result
       }

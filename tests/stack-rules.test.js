@@ -270,6 +270,17 @@ test('does not let an AI use an unknown joker in its opening stack', () => {
   assert.equal(move.cards.some((card) => card.isJoker), false)
 })
 
+test('handles an unknown joker when the AI has no valid opening stack', () => {
+  const hand = [
+    { id: '1', rank: '4', suit: '♠' },
+    { id: '2', rank: '5', suit: '♥' },
+    { id: '3', rank: '6', suit: '♣' },
+    { id: '4', rank: '7', suit: '♦', isJoker: true },
+  ]
+
+  assert.equal(findAiStackMove(hand, [], 'cpu-1', false), null)
+})
+
 test('finds a one-card stack extension even when the AI already has two stacks', () => {
   const existing = [
     { id: 'a', rank: '4', suit: '♠' },
