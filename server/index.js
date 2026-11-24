@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { canExtendStack, canSeeJoker, getJokerLabel, isValidStack, markJokers, ranks, suits } from '../src/gameRules.js'
+import { addCardsToStack, canExtendStackOnSide, canSeeJoker, getJokerLabel, hasPlayerPlayedStack, isValidStack, markJokers, orderStackCards, ranks, reshuffleDiscardIntoDeck, suits } from '../src/gameRules.js'
 
 const rooms = new Map()
 const reconnectGraceMs = Math.max(1_000, Number(process.env.FISS_RECONNECT_MS || 30_000))
@@ -32,6 +32,7 @@ function newRoom(id) {
     jokerLabel: null,
     jokerReference: null,
     jokerSeenBy: new Set(),
+    reshuffleVersion: 0,
     disconnectTimers: new Map(),
   }
   rooms.set(id, room)
@@ -109,6 +110,7 @@ function startRoom(room) {
   room.hasDrawnThisTurn = false
   room.winner = null
   room.jokerSeenBy = new Set()
+  room.reshuffleVersion = 0
 
   for (const player of room.players) {
     player.hand = []
@@ -151,6 +153,7 @@ function roomSnapshot(room, recipientId) {
     started: room.started,
     deckCount: room.deck.length,
     discard: room.discard.map(snapshotCard),
+    reshuffleVersion: room.reshuffleVersion,
     stacks: room.stacks.map((stack) => ({
       ...stack,
       cards: stack.cards.map(snapshotCard),
@@ -335,8 +338,8 @@ wss.on('connection', (socket) => {
       }
       if (message.type === 'play_stack') {
         const cardIds = message.payload?.cardIds
-        if (!Array.isArray(cardIds) || cardIds.length < 3 || new Set(cardIds).size !== cardIds.length) {
-          reject(socket, 'INVALID_STACK', 'A stack needs at least 3 unique cards')
+        if (!Array.isArray(cardIds) || cardIds.length === 0 || new Set(cardIds).size !== cardIds.length) {
+          reject(socket, 'INVALID_STACK', 'Choose one or more unique cards')
           return
         }
         if (cardIds.some((cardId) => typeof cardId !== 'string' || cardId.length > 128)) {
@@ -346,20 +349,49 @@ wss.on('connection', (socket) => {
         const active = getActivePlayer(room)
         if (!active) { reject(socket, 'INVALID_PLAYER', 'There is no active player'); return }
         const stackCards = cardIds.map((cardId) => active.hand.find((card) => card.id === cardId)).filter(Boolean)
-        if (stackCards.length !== cardIds.length || !isValidStack(stackCards)) {
-          reject(socket, 'INVALID_STACK', 'That stack does not follow the FISS rules.')
+        if (stackCards.length !== cardIds.length) {
+          reject(socket, 'INVALID_STACK', 'Those cards are not in your hand.')
           return
         }
-        const existingStack = room.stacks.find((stack) => canExtendStack(stack.cards, stackCards))
         const ownedStackCount = room.stacks.filter((stack) => stack.ownerId === playerId).length
-        if (!existingStack && ownedStackCount >= 2) {
-          reject(socket, 'MAX_STACKS', 'You can only open up to 2 stacks.')
-          return
+        let existingStack = null
+        if (message.payload.stackIndex !== undefined) {
+          if (!Number.isInteger(message.payload.stackIndex) || message.payload.stackIndex < 0 || message.payload.stackIndex >= room.stacks.length) {
+            reject(socket, 'INVALID_STACK', 'Choose a valid stack to extend.')
+            return
+          }
+          if (!hasPlayerPlayedStack(room.stacks, playerId)) {
+            reject(socket, 'STACK_REQUIRED', 'Play your own stack before adding cards to another player\'s stack.')
+            return
+          }
+          const side = message.payload.side
+          if (!['left', 'right'].includes(side)) {
+            reject(socket, 'INVALID_STACK', 'Choose the left or right side of the stack.')
+            return
+          }
+          existingStack = room.stacks[message.payload.stackIndex]
+          if (!canExtendStackOnSide(existingStack.cards, stackCards, side)) {
+            reject(socket, 'INVALID_STACK', 'Those cards cannot extend that side of the selected stack.')
+            return
+          }
+        } else {
+          if (message.payload.side !== undefined) {
+            reject(socket, 'INVALID_STACK', 'Choose a stack before selecting an extension side.')
+            return
+          }
+          if (stackCards.length < 3 || !isValidStack(stackCards)) {
+            reject(socket, 'INVALID_STACK', 'A new stack needs at least 3 cards and must follow the FISS rules.')
+            return
+          }
+          if (ownedStackCount >= 2) {
+            reject(socket, 'MAX_STACKS', 'You can only open up to 2 stacks.')
+            return
+          }
         }
         if (existingStack) {
-          existingStack.cards.push(...stackCards)
+          existingStack.cards = addCardsToStack(existingStack.cards, stackCards, message.payload.side)
         } else {
-          room.stacks.push({ ownerId: playerId, cards: stackCards })
+          room.stacks.push({ ownerId: playerId, cards: orderStackCards(stackCards) })
         }
         if (room.jokerMode === 'blind') room.jokerSeenBy.add(playerId)
         active.hand = active.hand.filter((card) => !cardIds.includes(card.id))
@@ -408,6 +440,12 @@ wss.on('connection', (socket) => {
           picked = room.discard.shift()
           if (!picked) { reject(socket, 'EMPTY_DISCARD', 'The discard pile is empty'); return }
         } else {
+          if (room.deck.length === 0 && room.discard.length > 0) {
+            const recycled = reshuffleDiscardIntoDeck(room.deck, room.discard)
+            room.deck = recycled.deck
+            room.discard = recycled.discard
+            room.reshuffleVersion += 1
+          }
           picked = room.deck.pop()
           if (!picked) { reject(socket, 'EMPTY_DECK', 'The deck is empty'); return }
         }

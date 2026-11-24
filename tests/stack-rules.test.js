@@ -9,16 +9,36 @@ import {
   markJokers,
   isValidStack,
   canOpenNewStackForPlayer,
+  hasPlayerPlayedStack,
   canPlayerAct,
   canExtendStack,
+  canExtendStackOnSide,
+  addCardsToStack,
   isStackComplete,
   advanceTurnIndex,
   getRelativeSeat,
   getStandings,
   canDiscardThisTurn,
   getTurnMessage,
+  reshuffleDiscardIntoDeck,
   findAiStackMove,
 } from '../src/gameRules.js'
+
+test('recycles and shuffles the discard pile only when the deck is empty', () => {
+  const card = (id) => ({ id })
+  const discard = [card('a'), card('b'), card('c')]
+  const recycled = reshuffleDiscardIntoDeck([], discard, () => 0)
+
+  assert.equal(recycled.reshuffled, true)
+  assert.equal(recycled.discard.length, 0)
+  assert.equal(recycled.deck.length, 3)
+  assert.equal(recycled.deck.map((item) => item.id).sort().join(','), 'a,b,c')
+
+  const unchanged = reshuffleDiscardIntoDeck([card('deck')], discard)
+  assert.equal(unchanged.reshuffled, false)
+  assert.deepEqual(unchanged.deck.map((item) => item.id), ['deck'])
+  assert.deepEqual(unchanged.discard.map((item) => item.id), ['a', 'b', 'c'])
+})
 
 test('accepts a valid same-suit sequence', () => {
   const cards = [
@@ -103,6 +123,14 @@ test('blocks opening a third stack when a player already has two active stacks',
   assert.equal(canOpenNewStackForPlayer(stacks, 'p2'), true)
 })
 
+test('tracks whether a player has opened at least one stack', () => {
+  const stacks = [{ ownerId: 'p1', cards: [] }]
+
+  assert.equal(hasPlayerPlayedStack(stacks, 'p1'), true)
+  assert.equal(hasPlayerPlayedStack(stacks, 'p2'), false)
+  assert.equal(hasPlayerPlayedStack([], 'p1'), false)
+})
+
 test('shows the joker face-up in seen mode and hides it in blind mode', () => {
   assert.equal(getJokerDisplay('seen', { rank: '8', suit: '♣' }), '9 of any suit')
   assert.equal(getJokerDisplay('blind', { rank: '8', suit: '♣' }), '??')
@@ -134,6 +162,37 @@ test('allows a valid sequence to extend an existing same-suit stack', () => {
 
   assert.equal(canExtendStack(existing, candidate), true)
   assert.equal(canExtendStack(existing, [{ id: 'x', rank: '9', suit: '♠', color: 'black', isJoker: false }]), false)
+})
+
+test('validates left and right sequence extensions and inserts cards at the chosen side', () => {
+  const existing = [
+    { id: '4', rank: '4', suit: '♠' },
+    { id: '5', rank: '5', suit: '♠' },
+    { id: '6', rank: '6', suit: '♠' },
+  ]
+  const lowerCards = [
+    { id: '2', rank: '2', suit: '♠' },
+    { id: '3', rank: '3', suit: '♠' },
+  ]
+  const higherCard = { id: '7', rank: '7', suit: '♠' }
+
+  assert.equal(canExtendStackOnSide(existing, lowerCards, 'left'), true)
+  assert.equal(canExtendStackOnSide(existing, lowerCards, 'right'), false)
+  assert.equal(canExtendStackOnSide(existing, [higherCard], 'right'), true)
+  assert.equal(canExtendStackOnSide(existing, [higherCard], 'left'), false)
+  assert.deepEqual(addCardsToStack(existing, lowerCards, 'left').map((card) => card.rank), ['2', '3', '4', '5', '6'])
+})
+
+test('allows a joker to be added to either physical end of a compatible stack', () => {
+  const existing = [
+    { id: '4', rank: '4', suit: '♠' },
+    { id: '5', rank: '5', suit: '♠' },
+    { id: '6', rank: '6', suit: '♠' },
+  ]
+  const joker = { id: 'joker', rank: '8', suit: '♥', isJoker: true }
+
+  assert.equal(canExtendStackOnSide(existing, [joker], 'left'), true)
+  assert.equal(canExtendStackOnSide(existing, [joker], 'right'), true)
 })
 
 test('detects a complete same-rank set that cannot accept more cards', () => {
@@ -197,6 +256,20 @@ test('finds a valid stack for an AI to open', () => {
   assert.equal(move.stackIndex, -1)
 })
 
+test('does not let an AI use an unknown joker in its opening stack', () => {
+  const hand = [
+    { id: '1', rank: '4', suit: '♠' },
+    { id: '2', rank: '5', suit: '♠' },
+    { id: '3', rank: '6', suit: '♠' },
+    { id: '4', rank: '7', suit: '♠', isJoker: true },
+  ]
+
+  const move = findAiStackMove(hand, [], 'cpu-1', false)
+
+  assert.deepEqual(move.cards.map((card) => card.id), ['1', '2', '3'])
+  assert.equal(move.cards.some((card) => card.isJoker), false)
+})
+
 test('finds a one-card stack extension even when the AI already has two stacks', () => {
   const existing = [
     { id: 'a', rank: '4', suit: '♠' },
@@ -211,7 +284,40 @@ test('finds a one-card stack extension even when the AI already has two stacks',
 
   const move = findAiStackMove(hand, stacks, 'cpu-1')
   assert.equal(move.stackIndex, 0)
+  assert.equal(move.side, 'right')
   assert.deepEqual(move.cards.map((card) => card.id), ['g'])
+})
+
+test('does not let an AI extend another player stack before opening its own', () => {
+  const stacks = [{
+    ownerId: 'player-1',
+    cards: [
+      { id: 'a', rank: '4', suit: '♠' },
+      { id: 'b', rank: '5', suit: '♠' },
+      { id: 'c', rank: '6', suit: '♠' },
+    ],
+  }]
+  const hand = [{ id: 'd', rank: '7', suit: '♠' }]
+
+  assert.equal(findAiStackMove(hand, stacks, 'cpu-1'), null)
+})
+
+test('lets an AI open its own first stack when those cards could also extend another stack', () => {
+  const stacks = [{
+    ownerId: 'player-1',
+    cards: [
+      { id: 'a', rank: '5', suit: '♠' },
+      { id: 'b', rank: '6', suit: '♠' },
+      { id: 'c', rank: '7', suit: '♠' },
+    ],
+  }]
+  const hand = [
+    { id: 'd', rank: '2', suit: '♠' },
+    { id: 'e', rank: '3', suit: '♠' },
+    { id: 'f', rank: '4', suit: '♠' },
+  ]
+
+  assert.equal(findAiStackMove(hand, stacks, 'cpu-1').stackIndex, -1)
 })
 
 test('does not open a third AI stack when no extension is available', () => {

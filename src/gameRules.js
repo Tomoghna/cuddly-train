@@ -2,6 +2,20 @@ export const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q
 export const suits = ['♠', '♥', '♣', '♦']
 export const rankValues = Object.fromEntries(ranks.map((rank, index) => [rank, index + 1]))
 
+export function reshuffleDiscardIntoDeck(deck = [], discard = [], random = Math.random) {
+  if (!Array.isArray(deck) || !Array.isArray(discard) || deck.length > 0 || discard.length === 0) {
+    return { deck: [...(deck ?? [])], discard: [...(discard ?? [])], reshuffled: false }
+  }
+
+  const recycled = [...discard]
+  for (let index = recycled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(random() * (index + 1))
+    ;[recycled[index], recycled[randomIndex]] = [recycled[randomIndex], recycled[index]]
+  }
+
+  return { deck: recycled, discard: [], reshuffled: true }
+}
+
 export function rankAfter(rank) {
   const cycle = ranks
   const current = cycle.indexOf(rank)
@@ -66,9 +80,11 @@ export function canExtendStack(existing = [], candidate = []) {
   const base = existing.filter((card) => !card.isJoker && card.rank !== 'JOKER')
   const next = candidate.filter((card) => !card.isJoker && card.rank !== 'JOKER')
 
-  if (base.length === 0 || next.length === 0) {
+  if (base.length === 0) {
     return false
   }
+
+  if (next.length === 0) return !isStackComplete(existing)
 
   const sameSuit = new Set(base.map((card) => card.suit)).size === 1 && new Set(next.map((card) => card.suit)).size === 1
   const sameRank = new Set(base.map((card) => card.rank)).size === 1 && new Set(next.map((card) => card.rank)).size === 1
@@ -78,6 +94,39 @@ export function canExtendStack(existing = [], candidate = []) {
   }
 
   return sameSuit && !isStackComplete(existing)
+}
+
+export function canExtendStackOnSide(existing = [], candidate = [], side) {
+  if (!['left', 'right'].includes(side) || !canExtendStack(existing, candidate)) return false
+
+  const base = existing.filter((card) => !card.isJoker && card.rank !== 'JOKER')
+  const next = candidate.filter((card) => !card.isJoker && card.rank !== 'JOKER')
+  if (next.length === 0) return true
+
+  const baseRanks = new Set(base.map((card) => card.rank))
+  const nextRanks = new Set(next.map((card) => card.rank))
+  if (baseRanks.size === 1 && nextRanks.size === 1 && baseRanks.has(next[0].rank)) return true
+
+  const baseValues = base.map((card) => rankValues[card.rank])
+  const nextValues = next.map((card) => rankValues[card.rank])
+  if (side === 'left') return Math.max(...nextValues) < Math.min(...baseValues)
+  return Math.min(...nextValues) > Math.max(...baseValues)
+}
+
+export function orderStackCards(cards = []) {
+  const nonJokers = cards.filter((card) => !card.isJoker && card.rank !== 'JOKER')
+  const sameSuit = new Set(nonJokers.map((card) => card.suit)).size === 1
+  const sameRank = new Set(nonJokers.map((card) => card.rank)).size === 1
+  if (!sameSuit || sameRank) return [...cards]
+  return [...cards].sort((left, right) => (rankValues[left.rank] ?? 0) - (rankValues[right.rank] ?? 0))
+}
+
+export function addCardsToStack(existing = [], candidate = [], side = 'right') {
+  const orderedExisting = orderStackCards(existing)
+  const orderedCandidate = orderStackCards(candidate)
+  return side === 'left'
+    ? [...orderedCandidate, ...orderedExisting]
+    : [...orderedExisting, ...orderedCandidate]
 }
 
 export function advanceTurnIndex(playerCount, currentIndex) {
@@ -117,6 +166,10 @@ export function getTurnMessage(state = {}) {
 export function countStacksForPlayer(stacks, playerId) {
   if (!Array.isArray(stacks)) return 0
   return stacks.filter((stack) => stack && stack.ownerId === playerId).length
+}
+
+export function hasPlayerPlayedStack(stacks, playerId) {
+  return countStacksForPlayer(stacks, playerId) > 0
 }
 
 export function canOpenNewStackForPlayer(stacks, playerId) {
@@ -168,19 +221,33 @@ export function isValidStack(cards) {
   return values.length + jokerCount >= 3 && missing <= jokerCount
 }
 
-export function findAiStackMove(hand, stacks = [], playerId) {
+export function findAiStackMove(hand, stacks = [], playerId, jokerKnown = true) {
   if (!Array.isArray(hand) || !Array.isArray(stacks) || hand.length === 0) return null
 
-  const maxSize = Math.min(4, hand.length)
+  const eligibleHand = jokerKnown
+    ? hand
+    : hand.filter((card) => !card.isJoker && card.rank !== 'JOKER')
+  const maxSize = Math.min(4, eligibleHand.length)
   const canOpenStack = countStacksForPlayer(stacks, playerId) < 2
+  const canExtendExistingStack = hasPlayerPlayedStack(stacks, playerId)
   let newStackMove = null
+
+  if (maxSize === 0) return null
 
   for (let size = maxSize; size >= 1; size -= 1) {
     const search = (startIndex, selected) => {
       if (selected.length === size) {
-        const cards = selected.map((index) => hand[index])
-        const stackIndex = stacks.findIndex((stack) => canExtendStack(stack.cards, cards))
-        if (stackIndex >= 0) return { cards, stackIndex }
+        const cards = selected.map((index) => eligibleHand[index])
+        const extension = canExtendExistingStack
+          ? stacks.reduce((match, stack, stackIndex) => {
+            if (match) return match
+            const side = ['left', 'right'].find((candidateSide) =>
+              canExtendStackOnSide(stack.cards, cards, candidateSide),
+            )
+            return side ? { stackIndex, side } : null
+          }, null)
+          : null
+        if (extension) return { cards, ...extension }
         if (!newStackMove && canOpenStack && cards.length >= 3 && isValidStack(cards)) {
           newStackMove = { cards, stackIndex: -1 }
         }

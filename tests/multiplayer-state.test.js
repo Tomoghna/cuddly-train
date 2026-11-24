@@ -110,6 +110,17 @@ test('server owns hands and advances turns after an authoritative discard', asyn
     assert.equal(started.players.find((player) => player.id === 'guest').hand.length, 0)
     assert.equal(started.deckCount + started.players.find((player) => player.id === 'host').hand.length + 8 + started.discard.length, 52)
 
+    const invalidStackTargetErrorPromise = waitForError(host)
+    host.send(JSON.stringify({
+      type: 'play_stack',
+      payload: {
+        cardIds: [started.players.find((player) => player.id === 'host').hand[0].id],
+        stackIndex: 0,
+        side: 'right',
+      },
+    }))
+    assert.equal((await invalidStackTargetErrorPromise).code, 'INVALID_STACK')
+
     const stackBeforeDrawErrorPromise = waitForError(host)
     host.send(JSON.stringify({
       type: 'play_stack',

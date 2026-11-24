@@ -28,6 +28,10 @@
 
     => suppose a player plays 2 stacks of 3 cards and are left with 2 cards... so the remaning cards cannot be stacked... because minimum three cards required to create a stack... so the remaining cards can be inserted into existing stacks played by the players..
 
+    => a player may add one or more cards to any compatible existing stack only after they have played at least one stack of their own.
+
+    => when extending a sequence, lower cards are added on the left and higher cards on the right. Players choose the compatible stack and available side; same-rank stacks may be extended on either side.
+
 
 
 

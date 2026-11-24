@@ -16,15 +16,19 @@ import {
   canSeeJoker,
   canDiscardThisTurn,
   canPlayStackThisTurn,
-  canExtendStack,
+  canExtendStackOnSide,
   canOpenNewStackForPlayer,
   canPlayerAct,
+  addCardsToStack,
+  reshuffleDiscardIntoDeck,
   getRelativeSeat,
   getJokerLabel,
   getStandings,
   findAiStackMove,
+  hasPlayerPlayedStack,
   isValidStack,
   markJokers,
+  orderStackCards,
   ranks,
   suits,
 } from './gameRules.js'
@@ -33,6 +37,7 @@ import './App.css'
 
 const palette = ['mint', 'violet', 'amber', 'rose']
 const INITIAL_HAND_SIZE = 8
+const TURN_DURATION_SECONDS = 30
 const DEAL_CARD_INTERVAL_MS = 140
 const DEAL_FLIGHT_DURATION_MS = 560
 
@@ -92,6 +97,52 @@ function CardArtwork({ card }) {
       )}
       <span className="playing-card-corner corner-bottom">{card.rank}<small>{card.suit}</small></span>
     </>
+  )
+}
+
+function getDiscardCardTransform(cardId) {
+  const hash = String(cardId).split('').reduce(
+    (value, character) => (Math.imul(value, 31) + character.charCodeAt(0)) >>> 0,
+    0,
+  )
+  const direction = hash % 2 === 0 ? -1 : 1
+  const offset = 7 + ((hash >>> 1) % 6)
+  const rotation = ((hash >>> 4) % 9 - 4) * 1.5
+  const verticalOffset = -((hash >>> 8) % 5)
+
+  return `translate(${direction * offset}px, ${verticalOffset}px) rotate(${rotation}deg)`
+}
+
+function HandTurnTimer({ onExpire }) {
+  const [secondsRemaining, setSecondsRemaining] = useState(TURN_DURATION_SECONDS)
+  const onExpireRef = useRef(onExpire)
+
+  useEffect(() => {
+    onExpireRef.current = onExpire
+  }, [onExpire])
+
+  useEffect(() => {
+    let remaining = TURN_DURATION_SECONDS
+    const timer = window.setInterval(() => {
+      remaining -= 1
+      setSecondsRemaining(remaining)
+      if (remaining <= 0) {
+        window.clearInterval(timer)
+        onExpireRef.current()
+      }
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <span
+      className={`hand-turn-timer ${secondsRemaining <= 5 ? 'urgent' : ''}`}
+      role="timer"
+      aria-label={`${secondsRemaining} seconds remaining`}
+    >
+      {secondsRemaining}s
+    </span>
   )
 }
 
@@ -191,6 +242,14 @@ function App() {
   const [joinCode, setJoinCode] = useState('')
   const [game, setGame] = useState(() => createGameState(4, 'seen', { playerId }))
   const [selectedCardIds, setSelectedCardIds] = useState([])
+  const [draggedCardId, setDraggedCardId] = useState(null)
+  const [dropSlotIndex, setDropSlotIndex] = useState(null)
+  const [dropTargetStackIndex, setDropTargetStackIndex] = useState(null)
+  const [isTableDropActive, setIsTableDropActive] = useState(false)
+  const [isDiscardDropActive, setIsDiscardDropActive] = useState(false)
+  const [isJokerPeekOpen, setIsJokerPeekOpen] = useState(false)
+  const [selectedStackIndex, setSelectedStackIndex] = useState(null)
+  const [selectedStackSide, setSelectedStackSide] = useState('left')
   const [toast, setToast] = useState('')
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
@@ -201,8 +260,11 @@ function App() {
   const pendingRoomConfigurationRef = useRef(null)
   const previousRoomStateRef = useRef(null)
   const [discardAnimation, setDiscardAnimation] = useState(null)
+  const [reshuffleAnimation, setReshuffleAnimation] = useState(false)
   const [isDealing, setIsDealing] = useState(false)
   const handScrollRef = useRef(null)
+  const jokerPeekGestureRef = useRef(null)
+  const suppressDeckClickRef = useRef(false)
 
   useEffect(() => {
     if (screen !== 'table') return undefined
@@ -228,12 +290,19 @@ function App() {
       behavior: 'smooth',
     })
   }, [screen, currentHand.length])
-  const isMyTurn = serverState.activePlayerId === playerId || (!serverState.activePlayerId && !(game?.isSinglePlayer && currentPlayer?.isAI))
+  const isMyTurn = game?.isSinglePlayer
+    ? currentPlayer?.id === playerId
+    : serverState.activePlayerId === playerId || (!serverState.activePlayerId && currentPlayer?.id === playerId)
   const canActThisTurn = Boolean(game && currentPlayer && canPlayerAct(game, playerId)) || (isMyTurn && game?.phase === 'play')
   const isConnected = connectionStatus === 'connected'
-  const canDrawThisTurn = isConnected && isMyTurn && game?.phase === 'draw'
-  const canPlayStack = Boolean(isConnected && canPlayStackThisTurn(game) && isMyTurn)
-  const canDiscard = game ? isConnected && canDiscardThisTurn(game) && isMyTurn : false
+  const canUseTurnActions = Boolean(game?.isSinglePlayer || isConnected)
+  const canDrawThisTurn = canUseTurnActions && isMyTurn && game?.phase === 'draw'
+  const canPlayStack = Boolean(canUseTurnActions && canPlayStackThisTurn(game) && isMyTurn)
+  const canDiscard = game ? canUseTurnActions && canDiscardThisTurn(game) && isMyTurn : false
+  const shouldRunTurnTimer = screen === 'table'
+    && isMyTurn
+    && currentPlayer?.id === playerId
+    && Boolean(game?.isSinglePlayer || isConnected)
   const connectionLabel = {
     connecting: 'Connecting',
     connected: 'Live',
@@ -246,6 +315,12 @@ function App() {
     const timer = window.setTimeout(() => setToast(''), 2200)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  useEffect(() => {
+    if (!reshuffleAnimation) return undefined
+    const timer = window.setTimeout(() => setReshuffleAnimation(false), 1100)
+    return () => window.clearTimeout(timer)
+  }, [reshuffleAnimation])
 
   useEffect(() => {
     let disposed = false
@@ -296,6 +371,13 @@ function App() {
           const discardedCard = message.discard?.[0]
           if (
             previousRoomState?.roomId === message.roomId
+            && Number.isInteger(message.reshuffleVersion)
+            && message.reshuffleVersion !== previousRoomState.reshuffleVersion
+          ) {
+            setReshuffleAnimation(true)
+          }
+          if (
+            previousRoomState?.roomId === message.roomId
             && previousRoomState?.started
             && message.started
             && message.phase === 'draw'
@@ -313,6 +395,7 @@ function App() {
             started: Boolean(message.started),
             activePlayerId: message.activePlayerId,
             discardCardId: discardedCard?.id ?? null,
+            reshuffleVersion: Number.isInteger(message.reshuffleVersion) ? message.reshuffleVersion : previousRoomState?.reshuffleVersion ?? 0,
           }
           joinedRef.current = true
           retryCount = 0
@@ -471,6 +554,136 @@ function App() {
       return false
     }
 
+    if (game?.isSinglePlayer) {
+      const active = game.players[game.activeIndex]
+      if (!active || active.id !== playerId) {
+        setToast('Wait for your turn before acting.')
+        return false
+      }
+
+      if (type === 'draw') {
+        if (game.phase !== 'draw') {
+          setToast('You already drew a card this turn.')
+          return false
+        }
+
+        const nextDeck = [...game.deck]
+        let nextDiscard = [...game.discard]
+        let reshuffleVersion = game.reshuffleVersion ?? 0
+        let picked
+        if (payload.source === 'discard') {
+          picked = nextDiscard.shift()
+        } else {
+          let recyclableDeck = nextDeck
+          if (recyclableDeck.length === 0 && nextDiscard.length > 0) {
+            const recycled = reshuffleDiscardIntoDeck(recyclableDeck, nextDiscard)
+            recyclableDeck = recycled.deck
+            nextDiscard = recycled.discard
+            reshuffleVersion += 1
+          }
+          picked = recyclableDeck.pop()
+          nextDeck.splice(0, nextDeck.length, ...recyclableDeck)
+        }
+        if (!picked) {
+          setToast(payload.source === 'discard' ? 'The discard pile is empty.' : 'The deck is empty.')
+          return false
+        }
+        if (reshuffleVersion !== (game.reshuffleVersion ?? 0)) setReshuffleAnimation(true)
+
+        setGame({
+          ...game,
+          players: game.players.map((player) =>
+            player.id === playerId ? { ...player, hand: [...player.hand, picked] } : player,
+          ),
+          deck: nextDeck,
+          discard: nextDiscard,
+          reshuffleVersion,
+          phase: 'play',
+          hasDrawnThisTurn: true,
+        })
+        return true
+      }
+
+      if (type === 'discard') {
+        if (!canDiscardThisTurn(game)) {
+          setToast('Draw a card before discarding.')
+          return false
+        }
+        const discarded = active.hand.find((card) => card.id === payload.cardId)
+        if (!discarded) {
+          setToast('That card is not in your hand.')
+          return false
+        }
+
+        const remainingHand = active.hand.filter((card) => card.id !== discarded.id)
+        const winner = remainingHand.length === 0 ? active.name : null
+        setGame({
+          ...game,
+          players: game.players.map((player) =>
+            player.id === playerId ? { ...player, hand: remainingHand } : player,
+          ),
+          discard: [discarded, ...game.discard],
+          activeIndex: winner ? game.activeIndex : advanceTurnIndex(game.players.length, game.activeIndex),
+          phase: 'draw',
+          hasDrawnThisTurn: false,
+          winner,
+          reshuffleVersion,
+        })
+        if (winner) setScreen('winner')
+        return true
+      }
+
+      if (type === 'play_stack') {
+        if (!canPlayStackThisTurn(game) || !Array.isArray(payload.cardIds)) {
+          setToast('Play a stack before drawing a card.')
+          return false
+        }
+        const stackCards = active.hand.filter((card) => payload.cardIds.includes(card.id))
+        if (stackCards.length !== payload.cardIds.length || stackCards.length === 0) {
+          setToast('Those cards are not in your hand.')
+          return false
+        }
+
+        const nextStacks = [...game.stacks]
+        if (Number.isInteger(payload.stackIndex)) {
+          const existingStack = nextStacks[payload.stackIndex]
+          if (!existingStack || !canExtendStackOnSide(existingStack.cards, stackCards, payload.side)) {
+            setToast('Those cards cannot extend the selected stack.')
+            return false
+          }
+          nextStacks[payload.stackIndex] = {
+            ...existingStack,
+            cards: addCardsToStack(existingStack.cards, stackCards, payload.side),
+          }
+        } else {
+          if (stackCards.length < 3 || !isValidStack(stackCards) || !canOpenNewStackForPlayer(nextStacks, playerId)) {
+            setToast('Those cards cannot open a new stack.')
+            return false
+          }
+          nextStacks.push({ ownerId: playerId, cards: orderStackCards(stackCards) })
+        }
+
+        const remainingHand = active.hand.filter((card) => !payload.cardIds.includes(card.id))
+        const winner = remainingHand.length === 0 ? active.name : null
+        setGame({
+          ...game,
+          players: game.players.map((player) =>
+            player.id === playerId ? { ...player, hand: remainingHand } : player,
+          ),
+          stacks: nextStacks,
+          jokerSeenBy: game.jokerMode === 'blind'
+            ? [...new Set([...(game.jokerSeenBy ?? []), playerId])]
+            : game.jokerSeenBy,
+          activeIndex: winner ? game.activeIndex : advanceTurnIndex(game.players.length, game.activeIndex),
+          phase: 'draw',
+          hasDrawnThisTurn: false,
+          winner,
+        })
+        if (winner) setScreen('winner')
+        return true
+      }
+    }
+
     const socket = socketRef.current
     if (!joinedRef.current || !socket || socket.readyState !== WebSocket.OPEN) {
       setToast('Wait until the room connection is restored before playing.')
@@ -504,7 +717,9 @@ function App() {
     const nextGame = createGameState(countOverride, modeOverride, { playerId, playerName: normalizedPlayerName })
     nextGame.room = nextRoomCode
     setGame(nextGame)
+    setIsJokerPeekOpen(false)
     setSelectedCardIds([])
+    setSelectedStackIndex(null)
     setRoomCodeInput(nextRoomCode)
     if (nextRoomCode === roomCode && joinedRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
       sendRoomControl('set_player_name', { name: normalizedPlayerName })
@@ -533,16 +748,12 @@ function App() {
   }
 
   const toggleCardSelection = (cardId) => {
+    setSelectedStackIndex(null)
     setSelectedCardIds((current) =>
       current.includes(cardId)
         ? current.filter((id) => id !== cardId)
         : [...current, cardId],
     )
-  }
-
-  const findStackToExtend = (stackCards) => {
-    if (!game || !Array.isArray(stackCards) || stackCards.length === 0) return null
-    return game.stacks.find((stack) => Array.isArray(stack.cards) && canExtendStack(stack.cards, stackCards)) ?? null
   }
 
   const drawFromDeck = () => {
@@ -555,9 +766,93 @@ function App() {
       return
     }
     if (!sendAction('draw', { source: 'deck' })) return
+    setSelectedCardIds([])
+    setSelectedStackIndex(null)
+    setIsJokerPeekOpen(false)
     setToast('Card drawn from the deck.')
   }
 
+  const autoDiscardTimedOutTurn = () => {
+    if (!game || !shouldRunTurnTimer || currentPlayer?.id !== playerId) return
+    if (game.phase !== 'draw' && (game.phase !== 'play' || !game.hasDrawnThisTurn)) return
+    const cardToDiscard = currentHand[0]
+    if (!cardToDiscard) {
+      setToast('No card is available to discard.')
+      return
+    }
+
+    if (game.isSinglePlayer) {
+      if (game.phase === 'draw' && game.deck.length === 0 && game.discard.length === 0) {
+        setToast('No card is available to draw.')
+        return
+      }
+
+      setGame((current) => {
+        if (!current) return current
+        const active = current.players[current.activeIndex]
+        if (!active || active.id !== playerId) return current
+
+        const nextDeck = [...current.deck]
+        let nextDiscard = [...current.discard]
+        let reshuffleVersion = current.reshuffleVersion ?? 0
+        let nextHand = [...active.hand]
+        if (current.phase === 'draw') {
+          let picked = nextDeck.pop()
+          if (!picked && nextDiscard.length > 0) {
+            const recycled = reshuffleDiscardIntoDeck([], nextDiscard)
+            nextDiscard = recycled.discard
+            picked = recycled.deck.pop()
+            nextDeck.splice(0, nextDeck.length, ...recycled.deck)
+            reshuffleVersion += 1
+          }
+          if (!picked) return current
+          if (reshuffleVersion !== (current.reshuffleVersion ?? 0)) setReshuffleAnimation(true)
+          nextHand.push(picked)
+        } else if (current.phase !== 'play' || !current.hasDrawnThisTurn) {
+          return current
+        }
+
+        const discarded = nextHand.shift()
+        if (!discarded) return current
+        nextDiscard.unshift(discarded)
+        const winner = nextHand.length === 0 ? active.name : null
+        if (winner) setScreen('winner')
+
+        return {
+          ...current,
+          players: current.players.map((player) =>
+            player.id === playerId ? { ...player, hand: nextHand } : player,
+          ),
+          deck: nextDeck,
+          discard: nextDiscard,
+          activeIndex: winner ? current.activeIndex : advanceTurnIndex(current.players.length, current.activeIndex),
+          phase: 'draw',
+          hasDrawnThisTurn: false,
+          winner,
+        }
+      })
+    } else {
+      if (game.phase === 'draw') {
+        const source = game.deck.length > 0
+          ? 'deck'
+          : game.discard.length > 0
+            ? 'discard'
+            : null
+        if (!source) {
+          setToast('No card is available to draw.')
+          return
+        }
+        if (!sendAction('draw', { source })) return
+      } else if (game.phase !== 'play' || !game.hasDrawnThisTurn) {
+        return
+      }
+      if (!sendAction('discard', { cardId: cardToDiscard.id })) return
+    }
+
+    setSelectedCardIds([])
+    setSelectedStackIndex(null)
+    setToast('Time expired. A card was discarded automatically.')
+  }
   const drawFromDiscard = () => {
     if (!game || game.phase !== 'draw') {
       setToast('You can only pick from the discard pile on your draw turn.')
@@ -568,7 +863,25 @@ function App() {
       return
     }
     if (!sendAction('draw', { source: 'discard' })) return
+    setSelectedCardIds([])
+    setSelectedStackIndex(null)
     setToast('Card picked from the discard pile.')
+  }
+
+  const discardCard = (cardId) => {
+    if (!game || !cardId) return
+    if (!canDiscard) {
+      setToast('You must draw before you can discard this turn.')
+      return
+    }
+    if (!currentHand.some((card) => card.id === cardId)) {
+      setToast('That card is not in your hand.')
+      return
+    }
+    if (!sendAction('discard', { cardId })) return
+    setSelectedCardIds([])
+    setSelectedStackIndex(null)
+    setToast('Card discarded.')
   }
 
   const discardSelected = () => {
@@ -576,18 +889,10 @@ function App() {
       setToast('Choose exactly one card to discard.')
       return
     }
-    if (!canDiscard) {
-      setToast('You must draw before you can discard this turn.')
-      return
-    }
-
-    const chosenId = selectedCardIds[0]
-    if (!sendAction('discard', { cardId: chosenId })) return
-    setSelectedCardIds([])
-    setToast('Card discarded.')
+    discardCard(selectedCardIds[0])
   }
 
-  const playSelectedStack = () => {
+  const playSelectedStack = (extensionSide = selectedStackSide, cardIds = selectedCardIds, stackIndex = selectedStackIndex) => {
     if (!game || !canPlayStackThisTurn(game)) {
       setToast('Play a stack before drawing a card.')
       return
@@ -598,31 +903,46 @@ function App() {
       return
     }
 
-    if (selectedCardIds.length < 3) {
-      setToast('Select at least 3 cards to make a stack.')
+    const handSnapshot = currentHand
+    const stackCards = handSnapshot.filter((card) => cardIds.includes(card.id))
+    const jokerUnknown = game.jokerMode === 'blind' && !canSeeJoker(game.jokerMode, playerId, game.jokerSeenBy)
+    const hasPlayedStack = hasPlayerPlayedStack(game.stacks, currentPlayer.id)
+    const existingStack = hasPlayedStack && Number.isInteger(stackIndex)
+      ? game.stacks[stackIndex]
+      : null
+    const canExtendSelectedStack = !jokerUnknown
+      && existingStack
+      && canExtendStackOnSide(existingStack.cards, stackCards, extensionSide)
+
+    if (existingStack && !canExtendSelectedStack) {
+      setToast('Those cards cannot extend the selected side of that stack.')
       return
     }
 
-    const handSnapshot = currentHand
-    const stackCards = handSnapshot.filter((card) => selectedCardIds.includes(card.id))
-    const jokerUnknown = game.jokerMode === 'blind' && !canSeeJoker(game.jokerMode, playerId, game.jokerSeenBy)
-    if (!jokerUnknown && !isValidStack(stackCards)) {
+    if (stackCards.length < 3 && !canExtendSelectedStack) {
+      if (hasPlayedStack) {
+        setToast('Select a compatible stack and side, or at least 3 cards for a new stack.')
+      } else {
+        setToast('Select at least 3 cards to make a new stack.')
+      }
+      return
+    }
+
+    if (!jokerUnknown && !canExtendSelectedStack && !isValidStack(stackCards)) {
       setToast('Stacks must be 3+ cards in sequence or same rank.')
       return
     }
 
-    const existingStack = jokerUnknown ? null : findStackToExtend(stackCards)
-    if (!jokerUnknown && !existingStack && !canOpenNewStackForPlayer(game.stacks, currentPlayer.id)) {
+    if (!canExtendSelectedStack && !canOpenNewStackForPlayer(game.stacks, currentPlayer.id)) {
       setToast('You can only open up to 2 stacks in a round.')
       return
     }
 
-    if (!jokerUnknown && existingStack && !canExtendStack(existingStack.cards, stackCards)) {
-      setToast('Those cards do not correctly extend the selected stack.')
-      return
+    const payload = {
+      cardIds,
+      ...(canExtendSelectedStack ? { stackIndex, side: extensionSide } : {}),
     }
-
-    if (!sendAction('play_stack', { cardIds: selectedCardIds })) return
+    if (!sendAction('play_stack', payload)) return
     if (game.isSinglePlayer && game.jokerMode === 'blind') {
       setGame((current) => current && ({
         ...current,
@@ -631,13 +951,56 @@ function App() {
       }))
     }
     setSelectedCardIds([])
-    if (existingStack) {
-      setToast('Cards added to the table stack.')
+    setSelectedStackIndex(null)
+    if (canExtendSelectedStack) {
+      setToast(`Cards added to the ${extensionSide} side of the stack.`)
     } else if (jokerUnknown) {
       setToast('Stack played. The joker is now revealed to you.')
     } else {
       setToast('Stack played. Turn passed to the next player.')
     }
+  }
+
+  const getDroppedCardIds = (event) => {
+    const draggedId = event.dataTransfer.getData('text/plain')
+    if (!draggedId) return []
+    return [...new Set([...selectedCardIds, draggedId])]
+  }
+
+  const handleTableDrop = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const cardIds = getDroppedCardIds(event)
+    if (cardIds.length > 0) playSelectedStack(selectedStackSide, cardIds, null)
+    setIsTableDropActive(false)
+    setIsDiscardDropActive(false)
+    setDropTargetStackIndex(null)
+  }
+
+  const handleStackDrop = (event, stackIndex) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const cardIds = getDroppedCardIds(event)
+    const stack = game?.stacks[stackIndex]
+    const candidateCards = currentHand.filter((card) => cardIds.includes(card.id))
+    if (stack && cardIds.length > 0) {
+      const side = ['left', 'right'].find((candidateSide) =>
+        canExtendStackOnSide(stack.cards, candidateCards, candidateSide),
+      ) ?? 'left'
+      playSelectedStack(side, cardIds, stackIndex)
+    }
+    setIsTableDropActive(false)
+    setIsDiscardDropActive(false)
+    setDropTargetStackIndex(null)
+  }
+
+  const handleDiscardDrop = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    discardCard(event.dataTransfer.getData('text/plain'))
+    setIsDiscardDropActive(false)
+    setIsTableDropActive(false)
+    setDropTargetStackIndex(null)
   }
 
   const sortHand = () => {
@@ -660,6 +1023,31 @@ function App() {
     })
   }
 
+  const reorderHand = (draggedId, targetId, insertAfter) => {
+    if (draggedId === targetId) return
+
+    setGame((current) => {
+      if (!current) return current
+      const active = current.players.find((player) => player.id === playerId)
+      if (!active) return current
+
+      const hand = [...active.hand]
+      const draggedIndex = hand.findIndex((card) => card.id === draggedId)
+      if (draggedIndex === -1) return current
+      const [draggedCard] = hand.splice(draggedIndex, 1)
+      const targetIndex = hand.findIndex((card) => card.id === targetId)
+      if (targetIndex === -1) return current
+      hand.splice(targetIndex + (insertAfter ? 1 : 0), 0, draggedCard)
+
+      return {
+        ...current,
+        players: current.players.map((player) =>
+          player.id === playerId ? { ...player, hand } : player,
+        ),
+      }
+    })
+  }
+
   const startSinglePlayer = (countOverride = singlePlayerCount) => {
     const seatedGame = createGameState(countOverride, singlePlayerJokerMode, {
       room: 'SOLO-001',
@@ -667,7 +1055,9 @@ function App() {
       isSinglePlayer: true,
     })
     setGame(seatedGame)
+    setIsJokerPeekOpen(false)
     setSelectedCardIds([])
+    setSelectedStackIndex(null)
     setScreen('table')
   }
 
@@ -685,11 +1075,12 @@ function App() {
 
         const nextPlayers = current.players.map((player) => ({ ...player, hand: [...player.hand] }))
         const nextDeck = [...current.deck]
-        const nextDiscard = [...current.discard]
+        let nextDiscard = [...current.discard]
         const nextStacks = [...current.stacks]
 
         if (current.phase === 'draw') {
-          const stackMove = findAiStackMove(active.hand, current.stacks, active.id)
+          const jokerKnown = canSeeJoker(current.jokerMode, active.id, current.jokerSeenBy ?? [])
+          const stackMove = findAiStackMove(active.hand, current.stacks, active.id, jokerKnown)
           if (stackMove) {
             const remainingHand = active.hand.filter((card) =>
               !stackMove.cards.some((stackCard) => stackCard.id === card.id),
@@ -698,10 +1089,10 @@ function App() {
             if (stackMove.stackIndex >= 0) {
               nextStacks[stackMove.stackIndex] = {
                 ...nextStacks[stackMove.stackIndex],
-                cards: [...nextStacks[stackMove.stackIndex].cards, ...stackMove.cards],
+                cards: addCardsToStack(nextStacks[stackMove.stackIndex].cards, stackMove.cards, stackMove.side),
               }
             } else {
-              nextStacks.push({ ownerId: active.id, cards: stackMove.cards })
+              nextStacks.push({ ownerId: active.id, cards: orderStackCards(stackMove.cards) })
             }
 
             const winner = remainingHand.length === 0 ? active.name : null
@@ -720,7 +1111,16 @@ function App() {
             }
           }
 
-          const picked = nextDeck.pop() ?? nextDiscard.shift()
+          let picked = nextDeck.pop()
+          let reshuffleVersion = current.reshuffleVersion ?? 0
+          if (!picked && nextDiscard.length > 0) {
+            const recycled = reshuffleDiscardIntoDeck([], nextDiscard)
+            nextDiscard = recycled.discard
+            picked = recycled.deck.pop()
+            nextDeck.splice(0, nextDeck.length, ...recycled.deck)
+            reshuffleVersion += 1
+            setReshuffleAnimation(true)
+          }
           if (!picked) return current
           nextPlayers[current.activeIndex] = {
             ...active,
@@ -732,6 +1132,7 @@ function App() {
             players: nextPlayers,
             deck: nextDeck,
             discard: nextDiscard,
+            reshuffleVersion,
             phase: 'play',
             hasDrawnThisTurn: true,
           }
@@ -803,6 +1204,42 @@ function App() {
   const jokerIsVisible = game && (
     game.jokerVisible || canSeeJoker(game.jokerMode, playerId, game.jokerSeenBy)
   )
+  const canPeekJoker = Boolean(jokerIsVisible && game?.jokerReference && game.deck.length > 0)
+  const startJokerPeek = (event) => {
+    suppressDeckClickRef.current = false
+    if (!canPeekJoker || event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    jokerPeekGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      revealed: false,
+    }
+  }
+  const moveJokerPeek = (event) => {
+    const gesture = jokerPeekGestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.revealed) return
+    if (Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) < 10) return
+    gesture.revealed = true
+    suppressDeckClickRef.current = true
+    setIsJokerPeekOpen(true)
+  }
+  const endJokerPeek = (event) => {
+    if (jokerPeekGestureRef.current?.pointerId !== event.pointerId) return
+    jokerPeekGestureRef.current = null
+    setIsJokerPeekOpen(false)
+  }
+  const cancelJokerPeek = (event) => {
+    if (jokerPeekGestureRef.current?.pointerId !== event.pointerId) return
+    jokerPeekGestureRef.current = null
+    suppressDeckClickRef.current = false
+    setIsJokerPeekOpen(false)
+  }
+  const selectedCards = currentHand.filter((card) => selectedCardIds.includes(card.id))
+  const hasPlayedStack = hasPlayerPlayedStack(game?.stacks, myPlayer?.id)
+  const selectedStack = Number.isInteger(selectedStackIndex) ? game?.stacks[selectedStackIndex] : null
+  const selectedCardsExtendStack = hasPlayedStack
+    && Boolean(selectedStack && canExtendStackOnSide(selectedStack.cards, selectedCards, selectedStackSide))
 
   return (
     <main className="app-shell">
@@ -985,6 +1422,9 @@ function App() {
               const nextGame = createGameState(2, jokerMode, { playerId, playerName: normalizedPlayerName })
               nextGame.room = normalized
               setGame(nextGame)
+              setIsJokerPeekOpen(false)
+              setSelectedCardIds([])
+              setSelectedStackIndex(null)
               setScreen('lobby')
             }}>
               <Send size={16} /> Join room
@@ -1089,8 +1529,20 @@ function App() {
               ))}
             </div>
 
-            <div className={`felt-table${game.stacks.length ? ' has-stacks' : ''}`}>
+            <div
+              className={`felt-table${game.stacks.length ? ' has-stacks' : ''}${isTableDropActive ? ' drop-active' : ''}`}
+              onDragOver={(event) => {
+                if (event.target.closest('.table-stack')) return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+                setIsTableDropActive(true)
+                setIsDiscardDropActive(false)
+                setDropTargetStackIndex(null)
+              }}
+              onDrop={handleTableDrop}
+            >
               <div className="felt-glow" />
+              {isTableDropActive && <span className="table-drop-hint" aria-live="polite">Drop to play a stack</span>}
               <div className={`turn-badge ${isMyTurn ? 'my-turn' : ''}`} aria-live="polite">
                 <span className="turn-pulse" />
                 {game.winner ? `${game.winner} wins!` : isMyTurn ? (game.phase === 'draw' ? 'Your turn · draw or play a stack' : 'Your turn · discard a card') : `${activePlayer?.name ?? 'Player'} is playing`}
@@ -1098,28 +1550,94 @@ function App() {
 
               <div className="table-piles">
                 <div className="pile-group">
-                  <button className={`deck-stack ${canDrawThisTurn ? 'draw-ready' : ''}`} onClick={drawFromDeck} aria-label={`Draw from deck, ${game.deck.length} cards`} disabled={!canDrawThisTurn}>
+                  <button
+                    className={`deck-stack ${canDrawThisTurn ? 'draw-ready' : ''} ${canPeekJoker ? 'joker-peekable' : ''} ${isJokerPeekOpen && canPeekJoker ? 'is-peeking' : ''} ${reshuffleAnimation ? 'deck-reshuffling' : ''}`}
+                    onClick={() => {
+                      if (suppressDeckClickRef.current) {
+                        suppressDeckClickRef.current = false
+                        return
+                      }
+                      drawFromDeck()
+                    }}
+                    onPointerDown={startJokerPeek}
+                    onPointerMove={moveJokerPeek}
+                    onPointerUp={endJokerPeek}
+                    onPointerCancel={cancelJokerPeek}
+                    onKeyDown={(event) => {
+                      if (canPeekJoker && event.key.toLowerCase() === 'p' && !event.repeat) {
+                        event.preventDefault()
+                        suppressDeckClickRef.current = false
+                        setIsJokerPeekOpen(true)
+                      }
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key.toLowerCase() === 'p') setIsJokerPeekOpen(false)
+                    }}
+                    onBlur={() => setIsJokerPeekOpen(false)}
+                    aria-label={`${isJokerPeekOpen ? 'Showing the revealed card. ' : ''}Draw from deck, ${game.deck.length} cards${canPeekJoker ? '. Press and drag in any direction to flip the deck and reveal the bottom card.' : ''}`}
+                    aria-pressed={canPeekJoker ? isJokerPeekOpen : undefined}
+                    aria-keyshortcuts={canPeekJoker ? 'P' : undefined}
+                    title={canPeekJoker ? 'Press and drag in any direction to flip the deck and reveal the bottom card' : undefined}
+                    disabled={!canDrawThisTurn && !canPeekJoker}
+                  >
                     <span /><span /><span className="playing-card back-card"><Layers3 size={24} /></span>
+                    {canPeekJoker && (
+                      <span
+                        className={`playing-card deck-peek-card ${game.jokerReference.color === 'red' ? 'red-card' : ''}`}
+                        role="img"
+                        aria-label={`${game.jokerReference.rank} of ${game.jokerReference.suit}`}
+                        aria-hidden={!isJokerPeekOpen}
+                      >
+                        <CardArtwork card={game.jokerReference} />
+                      </span>
+                    )}
                   </button>
                   <span className="pile-count">{game.deck.length} in deck</span>
                 </div>
                 <div className="pile-divider" />
-                <button className={`discard-pile ${canDrawThisTurn ? 'draw-ready' : ''}`} onClick={drawFromDiscard} aria-label="Draw from discard pile" disabled={!canDrawThisTurn || game.discard.length === 0}>
-                  {game.discard[0] ? (
-                    <span
-                      key={game.discard[0].id}
-                      className={`playing-card discard-card ${game.discard[0].color === 'red' ? 'red-card' : ''} ${discardAnimation?.cardId === game.discard[0].id ? `discard-throwing from-${discardAnimation.seat}` : ''}`}
-                    >
-                      <CardArtwork card={game.discard[0]} />
-                    </span>
-                  ) : <span className="empty-discard-card">Empty</span>}
-                  <span className="pile-count">{game.discard.length ? 'Discard' : 'Empty discard'}</span>
-                </button>
-              </div>
-              <div className="joker-indicator" aria-live="polite">
-                {jokerIsVisible && game.jokerReference
-                  ? `Bottom card: ${game.jokerReference.rank}${game.jokerReference.suit} · Jokers: ${game.jokerLabel}`
-                  : 'Joker hidden until you play a stack'}
+                <div
+                  className={`discard-drop-zone${isDiscardDropActive ? ' drop-active' : ''}`}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    event.dataTransfer.dropEffect = 'move'
+                    setIsDiscardDropActive(true)
+                    setIsTableDropActive(false)
+                    setDropTargetStackIndex(null)
+                  }}
+                  onDrop={handleDiscardDrop}
+                >
+                  <button
+                    className={`discard-pile ${canDrawThisTurn ? 'draw-ready' : ''} ${reshuffleAnimation ? 'discard-reshuffling' : ''}`}
+                    onClick={drawFromDiscard}
+                    aria-label="Draw from discard pile"
+                    disabled={!canDrawThisTurn || game.discard.length === 0}
+                  >
+                    {game.discard.length > 1 && (
+                      <span className="discard-pile-layers" aria-hidden="true">
+                        {game.discard.slice(1, 5).reverse().map((card) => (
+                          <span
+                            key={card.id}
+                            className={`playing-card discard-card discard-stack-card ${card.color === 'red' ? 'red-card' : ''}`}
+                            style={{ transform: getDiscardCardTransform(card.id) }}
+                          >
+                            <CardArtwork card={card} />
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                    {game.discard[0] ? (
+                      <span
+                        key={game.discard[0].id}
+                        className={`playing-card discard-card ${game.discard[0].color === 'red' ? 'red-card' : ''} ${discardAnimation?.cardId === game.discard[0].id ? `discard-throwing from-${discardAnimation.seat}` : ''}`}
+                      >
+                        <CardArtwork card={game.discard[0]} />
+                      </span>
+                    ) : <span className="empty-discard-card">Empty</span>}
+                    {game.discard.length === 0 && <span className="pile-count">Empty discard</span>}
+                  </button>
+                  {isDiscardDropActive && <span className="discard-drop-hint" aria-live="polite">Drop to discard</span>}
+                </div>
               </div>
 
               {game.stacks.length > 0 && (
@@ -1127,20 +1645,78 @@ function App() {
                   {game.stacks.map((stack, stackIndex) => {
                     const owner = game.players.find((player) => player.id === stack.ownerId)
                     const ownerName = owner?.id === playerId ? 'You' : owner?.name ?? 'Unknown player'
+                    const canExtendLeft = hasPlayedStack && selectedCards.length > 0
+                      && canExtendStackOnSide(stack.cards, selectedCards, 'left')
+                    const canExtendRight = hasPlayedStack && selectedCards.length > 0
+                      && canExtendStackOnSide(stack.cards, selectedCards, 'right')
+                    const canSelectStack = canExtendLeft || canExtendRight
+                    const isSelectedStack = selectedStackIndex === stackIndex
 
                     return (
-                      <div className="table-stack" role="group" key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`} aria-label={`Stack played by ${ownerName}`}>
-                        <div className="table-stack-player">
-                          <span className={`stack-player-marker avatar-${owner?.color ?? 'mint'}`}>{owner?.initials ?? '?'}</span>
-                          <span className="stack-player-name">{ownerName}</span>
-                        </div>
-                        <div className="stack-mini-cards">
-                          {stack.cards.map((card) => (
-                            <span className={`stack-mini-card ${card.color === 'red' ? 'red-card' : ''}`} key={card.id}>
-                              {card.rank}<small>{card.suit}</small>
-                            </span>
-                          ))}
-                        </div>
+                      <div
+                        className={`table-stack${isSelectedStack ? ' selected' : ''}${dropTargetStackIndex === stackIndex ? ' drop-target' : ''}`}
+                        role="group"
+                        key={`${stack.ownerId ?? 'stack'}-${stackIndex}-${stack.cards.map((card) => card.id).join('-')}`}
+                        aria-label={`Stack played by ${ownerName}`}
+                        onDragOver={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          event.dataTransfer.dropEffect = 'move'
+                          setIsTableDropActive(false)
+                          setIsDiscardDropActive(false)
+                          setDropTargetStackIndex(stackIndex)
+                        }}
+                        onDrop={(event) => handleStackDrop(event, stackIndex)}
+                      >
+                        <button
+                          className="table-stack-target"
+                          type="button"
+                          aria-label={`Choose ${ownerName}'s stack`}
+                          aria-pressed={isSelectedStack}
+                          disabled={!canSelectStack && !isSelectedStack}
+                          onClick={() => {
+                            if (isSelectedStack) {
+                              setSelectedStackIndex(null)
+                            } else {
+                              setSelectedStackIndex(stackIndex)
+                              setSelectedStackSide(canExtendLeft ? 'left' : 'right')
+                            }
+                          }}
+                        >
+                          <span className="table-stack-player">
+                            <span className={`stack-player-marker avatar-${owner?.color ?? 'mint'}`}>{owner?.initials ?? '?'}</span>
+                            <span className="stack-player-name">{ownerName}</span>
+                            <span className="stack-target-label">{isSelectedStack ? 'SELECTED' : canSelectStack ? 'CHOOSE' : ''}</span>
+                          </span>
+                          <span className="stack-mini-cards">
+                            {stack.cards.map((card) => (
+                              <span className={`stack-mini-card ${card.color === 'red' ? 'red-card' : ''}`} key={card.id}>
+                                {card.rank}<small>{card.suit}</small>
+                              </span>
+                            ))}
+                          </span>
+                        </button>
+                        {isSelectedStack && (
+                          <div className="stack-side-controls" role="group" aria-label="Choose which side to extend">
+                            <button
+                              className="stack-side-button"
+                              type="button"
+                              disabled={!canExtendLeft}
+                              onClick={() => playSelectedStack('left')}
+                            >
+                              Extend left
+                            </button>
+                            <button
+                              className="stack-side-button"
+                              type="button"
+                              disabled={!canExtendRight}
+                              onClick={() => playSelectedStack('right')}
+                            >
+                              Extend right
+                            </button>
+                          </div>
+                        )}
+                        {canSelectStack && !isSelectedStack && <span className="stack-choice-hint">Select this stack</span>}
                       </div>
                     )
                   })}
@@ -1152,36 +1728,95 @@ function App() {
             <section className="player-hand" aria-label="Your hand">
               <div className="hand-heading">
                 <div className="you-label"><span className={`avatar avatar-${myPlayer?.color ?? 'mint'}`}>{myPlayer?.initials ?? 'YOU'}</span><b>Your hand</b><span className="hand-count">{currentHand.length}</span></div>
+                {shouldRunTurnTimer && (
+                  <HandTurnTimer onExpire={autoDiscardTimedOutTurn} />
+                )}
                 <button className="sort-button" onClick={sortHand}>Sort</button>
               </div>
-              <div className="hand-scroll" ref={handScrollRef}>
-                {currentHand.map((card, index) => (
-                  <button
-                    key={card.id}
-                    className={`hand-card ${card.color === 'red' ? 'red-card' : ''} ${selectedCardIds.includes(card.id) ? 'selected' : ''}`}
-                    style={{
-                      '--card-index': index,
-                      '--deal-delay': `${(index * game.players.length + Math.max(0, game.players.findIndex((dealPlayer) => dealPlayer.id === playerId))) * DEAL_CARD_INTERVAL_MS}ms`,
-                    }}
-                    onClick={() => toggleCardSelection(card.id)}
-                    aria-pressed={selectedCardIds.includes(card.id)}
-                    aria-label={`${card.rank} of ${card.suit}`}
-                    type="button"
-                  >
-                    <CardArtwork card={card} />
-                  </button>
-                ))}
+              <div
+                className={`hand-scroll ${draggedCardId ? 'is-reordering' : ''} ${dropSlotIndex === 0 ? 'drop-at-start' : ''} ${dropSlotIndex === currentHand.length ? 'drop-at-end' : ''}`}
+                ref={handScrollRef}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setIsTableDropActive(false)
+                  setIsDiscardDropActive(false)
+                  setDropTargetStackIndex(null)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const draggedId = event.dataTransfer.getData('text/plain')
+                  if (!draggedId || dropSlotIndex === null || currentHand.length === 0) return
+                  const slotIndex = Math.min(dropSlotIndex, currentHand.length)
+                  const targetIndex = Math.min(slotIndex, currentHand.length - 1)
+                  reorderHand(draggedId, currentHand[targetIndex].id, slotIndex === currentHand.length)
+                  setDropSlotIndex(null)
+                }}
+              >
+                {currentHand.map((card, index) => {
+                  const fanPosition = currentHand.length > 1
+                    ? (index / (currentHand.length - 1)) * 2 - 1
+                    : 0
+
+                  return (
+                    <button
+                      key={card.id}
+                      className={`hand-card ${card.color === 'red' ? 'red-card' : ''} ${selectedCardIds.includes(card.id) ? 'selected' : ''} ${draggedCardId === card.id ? 'dragging' : ''} ${dropSlotIndex === index ? 'drop-slot' : ''}`}
+                      style={{
+                        '--card-index': index,
+                        '--fan-rotation': `${fanPosition * 14}deg`,
+                        '--fan-lift': `${-12 * (1 - fanPosition ** 2)}px`,
+                        '--deal-delay': `${(index * game.players.length + Math.max(0, game.players.findIndex((dealPlayer) => dealPlayer.id === playerId))) * DEAL_CARD_INTERVAL_MS}ms`,
+                      }}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move'
+                        event.dataTransfer.setData('text/plain', card.id)
+                        setDraggedCardId(card.id)
+                        setDropSlotIndex(null)
+                        setIsTableDropActive(false)
+                        setIsDiscardDropActive(false)
+                        setDropTargetStackIndex(null)
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                        const bounds = event.currentTarget.getBoundingClientRect()
+                        const insertAfter = event.clientX > bounds.left + bounds.width / 2
+                        const targetIndex = currentHand.findIndex((handCard) => handCard.id === card.id)
+                        const slotIndex = targetIndex + (insertAfter ? 1 : 0)
+                        setDropSlotIndex((current) => current === slotIndex ? current : slotIndex)
+                      }}
+                      onDragEnd={() => {
+                        setDraggedCardId(null)
+                        setDropSlotIndex(null)
+                        setIsTableDropActive(false)
+                        setIsDiscardDropActive(false)
+                        setDropTargetStackIndex(null)
+                      }}
+                      onClick={() => toggleCardSelection(card.id)}
+                      aria-pressed={selectedCardIds.includes(card.id)}
+                      aria-label={`${card.rank} of ${card.suit}`}
+                      type="button"
+                    >
+                      <CardArtwork card={card} />
+                    </button>
+                  )
+                })}
               </div>
               <div className="action-dock">
                 {game.phase === 'draw' ? (
                   <>
                     <button className="action-button secondary-action" onClick={drawFromDiscard} disabled={!canDrawThisTurn || game.discard.length === 0}>Take discard</button>
                     <button className="action-button primary-action" onClick={drawFromDeck} disabled={!canDrawThisTurn}><Layers3 size={17} /> Draw card</button>
-                    <button className="action-button secondary-action" onClick={playSelectedStack} disabled={!canPlayStack || selectedCardIds.length < 3}>Play stack <span>{selectedCardIds.length || ''}</span></button>
+                    <button className="action-button secondary-action" onClick={playSelectedStack} disabled={!canPlayStack || (selectedCardIds.length < 3 && !selectedCardsExtendStack)}>Play stack <span>{selectedCardIds.length || ''}</span></button>
                   </>
                 ) : (
                   <>
-                    <button className="action-button secondary-action" onClick={() => setSelectedCardIds([])} disabled={selectedCardIds.length === 0}>Clear</button>
+                    <button className="action-button secondary-action" onClick={() => {
+                      setSelectedCardIds([])
+                      setSelectedStackIndex(null)
+                    }} disabled={selectedCardIds.length === 0 && selectedStackIndex === null}>Clear</button>
                     <button className="action-button secondary-action" onClick={discardSelected} disabled={!canDiscard || selectedCardIds.length !== 1}>Discard</button>
                   </>
                 )}
