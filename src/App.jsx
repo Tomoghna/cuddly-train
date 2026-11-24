@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ArrowLeft,
   Check,
   Copy,
   Crown,
@@ -308,6 +309,28 @@ function App() {
     return session && (!roomFromUrl || session.roomCode === roomFromUrl) ? session : null
   })
   const [screen, setScreen] = useState(() => savedSession ? 'lobby' : 'landing')
+  const screenFromHistoryRef = useRef(false)
+  useEffect(() => {
+    window.history.replaceState({ ...window.history.state, fissScreen: screen }, '')
+
+    const handlePopState = (event) => {
+      screenFromHistoryRef.current = true
+      setScreen(event.state?.fissScreen || 'landing')
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    if (screenFromHistoryRef.current) {
+      screenFromHistoryRef.current = false
+      return
+    }
+    if (window.history.state?.fissScreen !== screen) {
+      window.history.pushState({ ...window.history.state, fissScreen: screen }, '')
+    }
+  }, [screen])
   const [playerCount, setPlayerCount] = useState(4)
   const [singlePlayerCount, setSinglePlayerCount] = useState(2)
   const [singlePlayerJokerMode, setSinglePlayerJokerMode] = useState('blind')
@@ -872,6 +895,26 @@ function App() {
   const leaveMultiplayerRoom = () => {
     clearMultiplayerSession()
     setToast('')
+    setScreen('landing')
+  }
+
+  const goBack = () => {
+    if (screen === 'table' && game?.isSinglePlayer) {
+      setScreen('landing')
+      return
+    }
+    if (screen === 'table') {
+      setScreen('lobby')
+      return
+    }
+    if (screen === 'lobby' || screen === 'winner') {
+      leaveMultiplayerRoom()
+      return
+    }
+    if (window.history.state?.fissScreen === screen && window.history.length > 1) {
+      window.history.back()
+      return
+    }
     setScreen('landing')
   }
 
@@ -1479,7 +1522,7 @@ function App() {
                 <span className="setup-brand-mark">F</span>
                 <span className="setup-brand-copy"><b>FISS</b><small>CARD TABLE</small></span>
               </div>
-              <button className="ghost-button" onClick={() => setScreen('landing')}>Back</button>
+              <button className="ghost-button" onClick={goBack}><ArrowLeft size={15} /> Back</button>
             </header>
 
             <div className="setup-heading">
@@ -1542,7 +1585,7 @@ function App() {
                 <span className="setup-brand-mark">F</span>
                 <span className="setup-brand-copy"><b>FISS</b><small>CARD TABLE</small></span>
               </div>
-              <button className="ghost-button" onClick={() => setScreen('landing')}>Back</button>
+              <button className="ghost-button" onClick={goBack}><ArrowLeft size={15} /> Back</button>
             </header>
 
             <div className="setup-heading">
@@ -1603,6 +1646,7 @@ function App() {
       {screen === 'lobby' && game && (
         <section className="lobby-screen">
           <header className="game-header">
+            <button className="game-back-button" onClick={goBack} aria-label="Back"><ArrowLeft size={17} /></button>
             <button className="game-brand" onClick={leaveMultiplayerRoom} aria-label="Back to home">F</button>
             <div className="game-room-title">{game.room}</div>
             <div className={`connection connection-compact ${isConnected ? 'is-online' : ''}`}>
@@ -1642,6 +1686,7 @@ function App() {
       {screen === 'table' && game && (
         <section className="game-screen">
           <header className="game-header">
+            <button className="game-back-button" onClick={goBack} aria-label="Back"><ArrowLeft size={17} /></button>
             <button className="game-brand" onClick={() => setScreen('lobby')} aria-label="Room lobby">F</button>
             <div className="game-room-title">{game.room}</div>
             {!game.isSinglePlayer && (
@@ -2028,6 +2073,7 @@ function App() {
       {screen === 'winner' && game && (
         <section className="winner-screen">
           <header className="game-header">
+            <button className="game-back-button" onClick={goBack} aria-label="Back"><ArrowLeft size={17} /></button>
             <button className="game-brand" onClick={leaveMultiplayerRoom} aria-label="Back to home">F</button>
             <div className="game-room-title">{game.room}</div>
             <div className="connection connection-compact is-online">
