@@ -44,8 +44,10 @@ The lobby copy action shares this same deep link. A room accepts up to four play
 
 The server owns turn order, phase, room membership, and scores. Each active turn follows one of two paths:
 
-1. The active player may play a stack directly from the `draw` phase, ending the turn.
+1. The active player may play one or more stacks from the `draw` phase, then end the turn. They may also insert or extend compatible stacks after playing a stack of their own.
 2. Otherwise, they draw a card and discard one card from their hand; the next player then enters `draw`.
+
+A player who has played a stack cannot draw during that turn. After their last stack action, they must choose **End turn** to pass play to the next player.
 
 Invalid actions return typed errors such as `NOT_YOUR_TURN`, `DRAW_REQUIRED`, `ALREADY_DREW`, `INVALID_STACK`, and `INVALID_DISCARD`. The server also validates player IDs, limits tables to four players, sends heartbeat pings, and cleans up stale sockets.
 

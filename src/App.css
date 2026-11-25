@@ -864,16 +864,22 @@ button:disabled {
 }
 
 .winner-screen {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
   min-height: 100svh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   color: #f7f2e8;
-  background:
-    radial-gradient(ellipse at 50% 18%, rgba(231, 189, 114, 0.16), transparent 42%),
-    linear-gradient(160deg, #17251f, #101815 72%);
+  background: rgba(8, 15, 11, 0.82);
+  backdrop-filter: blur(5px);
 }
 
 .winner-portrait {
   position: relative;
+  flex: 1 0 auto;
   width: min(100%, 560px);
   min-height: calc(100svh - 58px);
   margin: 0 auto;
@@ -1230,12 +1236,25 @@ body {
 }
 
 .game-room-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: #f5eee2;
   font: 600 13px 'Space Grotesk', sans-serif;
   letter-spacing: 0.08em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.game-results-button {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(231, 189, 114, 0.4);
+  border-radius: 999px;
+  background: rgba(231, 189, 114, 0.12);
+  color: #f3d99e;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .connection-compact {

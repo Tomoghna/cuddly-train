@@ -27,6 +27,7 @@ function newRoom(id) {
     started: false,
     winner: null,
     hasDrawnThisTurn: false,
+    hasPlayedStackThisTurn: false,
     maxPlayers: 4,
     jokerMode: 'seen',
     jokerLabel: null,
@@ -108,6 +109,7 @@ function startRoom(room) {
   room.activePlayerId = room.players[0]?.id ?? null
   room.phase = 'draw'
   room.hasDrawnThisTurn = false
+  room.hasPlayedStackThisTurn = false
   room.winner = null
   room.jokerSeenBy = new Set()
   room.reshuffleVersion = 0
@@ -143,6 +145,7 @@ function roomSnapshot(room, recipientId) {
     turn: room.turn,
     phase: room.phase,
     hasDrawnThisTurn: room.hasDrawnThisTurn,
+    hasPlayedStackThisTurn: room.hasPlayedStackThisTurn,
     activePlayerId: room.activePlayerId,
     scores: room.scores,
     winner: room.winner,
@@ -188,6 +191,7 @@ function finishTurn(room) {
   room.turn = room.players.findIndex((player) => player.id === room.activePlayerId)
   room.phase = 'draw'
   room.hasDrawnThisTurn = false
+  room.hasPlayedStackThisTurn = false
 }
 
 wss.on('connection', (socket) => {
@@ -312,7 +316,7 @@ wss.on('connection', (socket) => {
       publishRoom(room)
       return
     }
-    if (message.type === 'draw' || message.type === 'discard' || message.type === 'play_stack') {
+    if (message.type === 'draw' || message.type === 'discard' || message.type === 'play_stack' || message.type === 'end_turn') {
       if (!isPlainObject(message.payload)) { rejectInvalidPayload(socket); return }
       if (!room.started) { reject(socket, 'GAME_NOT_STARTED', 'Start the game before making moves'); return }
       if (room.winner) { reject(socket, 'ROUND_COMPLETE', 'The round is complete'); return }
@@ -320,7 +324,7 @@ wss.on('connection', (socket) => {
         reject(socket, 'NOT_YOUR_TURN', 'Wait for the active player to finish')
         return
       }
-      if (room.phase === 'draw' && !['draw', 'play_stack'].includes(message.type)) {
+      if (room.phase === 'draw' && !['draw', 'play_stack', 'end_turn'].includes(message.type)) {
         reject(socket, 'DRAW_REQUIRED', 'Draw a card or play a stack to complete your turn')
         return
       }
@@ -330,6 +334,19 @@ wss.on('connection', (socket) => {
       }
       if (message.type === 'play_stack' && room.hasDrawnThisTurn) {
         reject(socket, 'STACK_AFTER_DRAW', 'You must play a stack before drawing')
+        return
+      }
+      if (message.type === 'draw' && room.hasPlayedStackThisTurn) {
+        reject(socket, 'ALREADY_PLAYED_STACK', 'End your turn after playing a stack')
+        return
+      }
+      if (message.type === 'end_turn') {
+        if (room.phase !== 'draw' || !room.hasPlayedStackThisTurn) {
+          reject(socket, 'INVALID_TURN_ACTION', 'Play a stack before ending your turn')
+          return
+        }
+        finishTurn(room)
+        publishRoom(room)
         return
       }
       if (message.type === 'discard' && !room.hasDrawnThisTurn) {
@@ -407,8 +424,9 @@ wss.on('connection', (socket) => {
         if (room.winner) {
           room.phase = 'draw'
           room.hasDrawnThisTurn = false
+          room.hasPlayedStackThisTurn = false
         } else {
-          finishTurn(room)
+          room.hasPlayedStackThisTurn = true
         }
         publishRoom(room)
         return
@@ -430,6 +448,7 @@ wss.on('connection', (socket) => {
         if (room.winner) {
           room.phase = 'draw'
           room.hasDrawnThisTurn = false
+          room.hasPlayedStackThisTurn = false
         } else {
           finishTurn(room)
         }
@@ -461,6 +480,7 @@ wss.on('connection', (socket) => {
         active.hand.push(picked)
         room.phase = 'play'
         room.hasDrawnThisTurn = true
+        room.hasPlayedStackThisTurn = false
         publishRoom(room)
         return
       }

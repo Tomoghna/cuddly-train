@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   canPlayStackThisTurn,
+  canDrawCardThisTurn,
   canSeeJoker,
   getJokerDisplay,
   getJokerLabel,
@@ -91,6 +92,15 @@ test('allows playing a stack instead of drawing on the turn', () => {
 
 test('blocks stack play after drawing a card this turn', () => {
   assert.equal(canPlayStackThisTurn({ phase: 'play', hasDrawnThisTurn: true }), false)
+})
+
+test('allows consecutive stack plays but prevents drawing until the player ends their turn', () => {
+  const state = { phase: 'draw', hasDrawnThisTurn: false, hasPlayedStackThisTurn: true }
+
+  assert.equal(canPlayStackThisTurn(state), true)
+  assert.equal(canDrawCardThisTurn(state), false)
+  assert.equal(getTurnMessage(state), 'Play another stack or end your turn')
+  assert.equal(canDrawCardThisTurn({ phase: 'draw', hasDrawnThisTurn: false }), true)
 })
 
 test('marks the four cards of the rank after the bottom card as jokers', () => {
@@ -186,6 +196,24 @@ test('validates left and right sequence extensions and inserts cards at the chos
   assert.deepEqual(addCardsToStack(existing, lowerCards, 'left').map((card) => card.rank), ['2', '3', '4', '5', '6'])
 })
 
+test('allows an ace after king but does not allow extending beyond that ace', () => {
+  const jack = { id: 'j', rank: 'J', suit: '♠' }
+  const queen = { id: 'q', rank: 'Q', suit: '♠' }
+  const king = { id: 'k', rank: 'K', suit: '♠' }
+  const ace = { id: 'a', rank: 'A', suit: '♠' }
+  const two = { id: '2', rank: '2', suit: '♠' }
+  const highSequence = [jack, queen, king]
+  const completedSequence = [...highSequence, ace]
+
+  assert.equal(isValidStack(completedSequence), true)
+  assert.equal(canExtendStackOnSide(highSequence, [ace], 'right'), true)
+  assert.deepEqual(orderStackCards([ace, king, jack, queen]).map((card) => card.rank), ['J', 'Q', 'K', 'A'])
+  assert.deepEqual(insertCardsAtIndex(highSequence, [ace], highSequence.length), completedSequence)
+  assert.deepEqual(addCardsToStack(highSequence, [ace], 'right'), completedSequence)
+  assert.equal(canExtendStackOnSide(completedSequence, [two], 'right'), false)
+  assert.equal(canInsertCardsAtIndex(completedSequence, [two], completedSequence.length), false)
+})
+
 test('allows a joker to fill an internal sequence position when opening or extending a stack', () => {
   const ace = { id: 'ace', rank: 'A', suit: '♠' }
   const two = { id: 'two', rank: '2', suit: '♠' }
@@ -207,6 +235,30 @@ test('allows a joker to fill an internal sequence position when opening or exten
     'joker',
     'four',
   ])
+})
+
+test('allows a joker to stand for ace after king and keeps existing joker ranks fixed', () => {
+  const jack = { id: 'j', rank: 'J', suit: '♠' }
+  const queen = { id: 'q', rank: 'Q', suit: '♠' }
+  const king = { id: 'k', rank: 'K', suit: '♠' }
+  const aceJoker = { id: 'joker-ace', rank: '6', suit: '♥', isJoker: true }
+  const highSequence = [jack, queen, king]
+  const jokerHighSequence = [...highSequence, aceJoker]
+  const two = { id: 'two', rank: '2', suit: '♠' }
+
+  assert.equal(canExtendStackOnSide(highSequence, [aceJoker], 'right'), true)
+  assert.deepEqual(insertCardsAtIndex(highSequence, [aceJoker], highSequence.length), jokerHighSequence)
+  assert.equal(canExtendStackOnSide(jokerHighSequence, [two], 'right'), false)
+
+  const ace = { id: 'ace', rank: 'A', suit: '♠' }
+  const three = { id: 'three', rank: '3', suit: '♠' }
+  const four = { id: 'four', rank: '4', suit: '♠' }
+  const five = { id: 'five', rank: '5', suit: '♠' }
+  const existing = [ace, two, three, aceJoker]
+
+  assert.equal(canInsertCardsAtIndex(existing, [four], 3), false)
+  assert.deepEqual(insertCardsAtIndex(existing, [five], 4), [ace, two, three, aceJoker, five])
+  assert.deepEqual(addCardsToStack(existing, [five], 'right'), [ace, two, three, aceJoker, five])
 })
 
 test('allows a joker to be added to either physical end of a compatible stack', () => {

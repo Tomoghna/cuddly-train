@@ -5,7 +5,7 @@
         a. either pick a card from the deck and discard one card from his hand into the table...
         b. at the starting the players has a stack (minimum 3 cards of same suite or same number)... he can throw the stack. In blind joker mode, a player learns the joker only after playing a stack.
 
-    => on a turn, a player either draws a card and discards a card from their hand, or plays a stack before drawing. The player cannot draw and play a stack in the same turn.
+    => on a turn, a player either draws a card and discards a card from their hand, or plays one or more stacks before drawing. After playing stacks, the player ends the turn without drawing. The player cannot draw and play a stack in the same turn.
 
     => if a player draws a card, they must discard one card and cannot play a stack that turn. If they play a stack, they do not draw a card that turn...
 
@@ -28,7 +28,7 @@
 
     => suppose a player plays 2 stacks of 3 cards and are left with 2 cards... so the remaning cards cannot be stacked... because minimum three cards required to create a stack... so the remaining cards can be inserted into existing stacks played by the players..
 
-    => a player may add one or more cards to any compatible existing stack only after they have played at least one stack of their own.
+    => a player may play a second stack or add one or more cards to any compatible existing stack during the same turn, but only after they have played at least one stack of their own.
 
     => a player may insert cards at any position in a compatible stack if the resulting stack remains valid. Jokers may fill missing sequence ranks, including between existing cards.
 

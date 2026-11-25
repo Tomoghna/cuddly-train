@@ -2,6 +2,34 @@ export const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q
 export const suits = ['♠', '♥', '♣', '♦']
 export const rankValues = Object.fromEntries(ranks.map((rank, index) => [rank, index + 1]))
 
+function getSequenceValues(cards) {
+  const values = cards.map((card) => rankValues[card.rank])
+  if (!cards.some((card) => card.rank === 'A')) return values
+
+  const highAceValues = cards.map((card) => card.rank === 'A' ? 14 : rankValues[card.rank])
+  const getMissingRanks = (sequenceValues) => {
+    const ordered = [...sequenceValues].sort((left, right) => left - right)
+    return ordered[ordered.length - 1] - ordered[0] + 1 - new Set(ordered).size
+  }
+
+  return getMissingRanks(highAceValues) < getMissingRanks(values) ? highAceValues : values
+}
+
+function getSequenceJokerAssignments(cards) {
+  const nonJokers = cards.filter((card) => !card.isJoker && card.rank !== 'JOKER')
+  if (nonJokers.length === 0 || new Set(nonJokers.map((card) => card.rank)).size === 1) {
+    return new Map()
+  }
+
+  const sequenceValues = getSequenceValues(nonJokers)
+  const firstRankIndex = cards.findIndex((card) => !card.isJoker && card.rank !== 'JOKER')
+  return new Map(cards.flatMap((card, index) => (
+    card.isJoker || card.rank === 'JOKER'
+      ? [[card.id, sequenceValues[0] + index - firstRankIndex]]
+      : []
+  )))
+}
+
 export function reshuffleDiscardIntoDeck(deck = [], discard = [], random = Math.random) {
   if (!Array.isArray(deck) || !Array.isArray(discard) || deck.length > 0 || discard.length === 0) {
     return { deck: [...(deck ?? [])], discard: [...(discard ?? [])], reshuffled: false }
@@ -39,6 +67,11 @@ export function markJokers(cards) {
 export function canPlayStackThisTurn(state = {}) {
   if (!state || typeof state !== 'object') return false
   return state.phase === 'draw' && !state.hasDrawnThisTurn
+}
+
+export function canDrawCardThisTurn(state = {}) {
+  if (!state || typeof state !== 'object') return false
+  return state.phase === 'draw' && !state.hasDrawnThisTurn && !state.hasPlayedStackThisTurn
 }
 
 export function canDiscardThisTurn(state = {}) {
@@ -97,20 +130,8 @@ export function canExtendStack(existing = [], candidate = []) {
 }
 
 export function canExtendStackOnSide(existing = [], candidate = [], side) {
-  if (!['left', 'right'].includes(side) || !canExtendStack(existing, candidate)) return false
-
-  const base = existing.filter((card) => !card.isJoker && card.rank !== 'JOKER')
-  const next = candidate.filter((card) => !card.isJoker && card.rank !== 'JOKER')
-  if (next.length === 0) return true
-
-  const baseRanks = new Set(base.map((card) => card.rank))
-  const nextRanks = new Set(next.map((card) => card.rank))
-  if (baseRanks.size === 1 && nextRanks.size === 1 && baseRanks.has(next[0].rank)) return true
-
-  const baseValues = base.map((card) => rankValues[card.rank])
-  const nextValues = next.map((card) => rankValues[card.rank])
-  if (side === 'left') return Math.max(...nextValues) < Math.min(...baseValues)
-  return Math.min(...nextValues) > Math.max(...baseValues)
+  if (!['left', 'right'].includes(side)) return false
+  return getValidStackInsertion(existing, candidate, side === 'left' ? 0 : existing.length) !== null
 }
 
 function getCandidateOrders(candidate) {
@@ -145,6 +166,7 @@ function getValidStackInsertion(existing = [], candidate = [], index) {
     return null
   }
 
+  const existingJokerAssignments = getSequenceJokerAssignments(existing)
   for (const orderedCandidate of getCandidateOrders(candidate)) {
     const merged = [
       ...existing.slice(0, index),
@@ -159,12 +181,20 @@ function getValidStackInsertion(existing = [], candidate = [], index) {
     if (new Set(nonJokers.map(({ card }) => card.rank)).size === 1) return merged
     if (new Set(nonJokers.map(({ card }) => card.suit)).size !== 1) continue
 
-    const isInSequenceOrder = nonJokers.every(({ card, cardIndex }, indexInSequence) => {
+    const sequenceValues = getSequenceValues(nonJokers.map(({ card }) => card))
+    const isInSequenceOrder = nonJokers.every(({ cardIndex }, indexInSequence) => {
       if (indexInSequence === 0) return true
-      const previous = nonJokers[indexInSequence - 1]
-      return rankValues[card.rank] - rankValues[previous.card.rank] === cardIndex - previous.cardIndex
+      return sequenceValues[indexInSequence] - sequenceValues[indexInSequence - 1]
+        === cardIndex - nonJokers[indexInSequence - 1].cardIndex
     })
-    if (isInSequenceOrder) return merged
+    if (!isInSequenceOrder) continue
+
+    const mergedJokerAssignments = getSequenceJokerAssignments(merged)
+    if ([...existingJokerAssignments].some(([jokerId, value]) => mergedJokerAssignments.get(jokerId) !== value)) {
+      continue
+    }
+
+    return merged
   }
 
   return null
@@ -184,15 +214,18 @@ export function orderStackCards(cards = []) {
   const sameRank = new Set(nonJokers.map((card) => card.rank)).size === 1
   if (!sameSuit || sameRank) return [...cards]
 
-  const orderedNonJokers = [...nonJokers].sort((left, right) => rankValues[left.rank] - rankValues[right.rank])
+  const sequenceValues = getSequenceValues(nonJokers)
+  const orderedNonJokers = nonJokers
+    .map((card, index) => ({ card, value: sequenceValues[index] }))
+    .sort((left, right) => left.value - right.value)
   const jokers = cards.filter((card) => card.isJoker || card.rank === 'JOKER')
   const ordered = []
   let jokerIndex = 0
 
-  orderedNonJokers.forEach((card, index) => {
+  orderedNonJokers.forEach(({ card, value }, index) => {
     const previous = orderedNonJokers[index - 1]
     if (previous) {
-      const missingRanks = rankValues[card.rank] - rankValues[previous.rank] - 1
+      const missingRanks = value - previous.value - 1
       for (let missing = 0; missing < missingRanks && jokerIndex < jokers.length; missing += 1) {
         ordered.push(jokers[jokerIndex])
         jokerIndex += 1
@@ -205,11 +238,10 @@ export function orderStackCards(cards = []) {
 }
 
 export function addCardsToStack(existing = [], candidate = [], side = 'right') {
-  const orderedExisting = orderStackCards(existing)
   const orderedCandidate = orderStackCards(candidate)
   return side === 'left'
-    ? [...orderedCandidate, ...orderedExisting]
-    : [...orderedExisting, ...orderedCandidate]
+    ? [...orderedCandidate, ...existing]
+    : [...existing, ...orderedCandidate]
 }
 
 export function advanceTurnIndex(playerCount, currentIndex) {
@@ -241,6 +273,7 @@ export function getStandings(players = []) {
 
 export function getTurnMessage(state = {}) {
   if (!state || typeof state !== 'object') return 'Draw a card'
+  if (state.hasPlayedStackThisTurn) return 'Play another stack or end your turn'
   if (state.phase === 'draw') return 'Draw a card or play a stack'
   if (state.hasDrawnThisTurn) return 'Discard a card'
   return 'Draw a card or play a stack'
@@ -293,7 +326,7 @@ export function isValidStack(cards) {
   const sameSuit = new Set(nonJokers.map((card) => card.suit)).size === 1
   if (!sameSuit) return false
 
-  const values = [...new Set(nonJokers.map((card) => rankValues[card.rank]))].sort((a, b) => a - b)
+  const values = [...new Set(getSequenceValues(nonJokers))].sort((a, b) => a - b)
   if (values.length < 2) {
     return values.length + jokerCount >= 3
   }
