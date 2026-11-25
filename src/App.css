@@ -1948,20 +1948,20 @@ body {
 .table-stacks {
   z-index: 2;
   position: absolute;
-  inset: auto 8% 22%;
-  height: 50%;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: max-content;
-  align-content: end;
-  align-items: end;
-  gap: 12px 8px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
+  inset: auto 8% 8%;
+  height: 36%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: pan-x;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 8px;
   scroll-behavior: smooth;
 }
 
@@ -1969,7 +1969,7 @@ body {
   position: absolute;
   z-index: 3;
   left: 50%;
-  bottom: 17%;
+  bottom: 2%;
   padding: 4px 7px;
   border: 1px solid rgba(239, 209, 140, 0.28);
   border-radius: 999px;
@@ -1989,18 +1989,20 @@ body {
 .table-stack {
   --stack-card-width: clamp(28px, 8vw, 42px);
   --stack-card-height: clamp(40px, 11vw, 60px);
+  flex: 0 0 44%;
   min-width: 0;
   max-width: 100%;
   padding: 2px 0;
   overflow: visible;
   text-align: center;
+  scroll-snap-align: center;
   animation: stack-land 420ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 .table-stack.expanded {
   --stack-card-width: var(--hand-card-width);
   --stack-card-height: var(--hand-card-height);
-  grid-column: 1 / -1;
+  flex-basis: 100%;
 }
 
 .table-stack.drop-target {
@@ -2111,6 +2113,20 @@ body {
 
 .table-stack-card:last-child {
   margin-right: 0;
+}
+
+.table-stack-card.insert-after {
+  margin-right: calc(var(--stack-card-width) * 0.12);
+}
+
+.table-stack-insertion-preview {
+  z-index: 20;
+  margin-left: calc(var(--stack-card-width) * 0.12);
+  border: 1px dashed rgba(255, 239, 191, 0.95);
+  box-shadow: 0 0 14px rgba(245, 207, 127, 0.48);
+  opacity: 0.42;
+  pointer-events: none;
+  animation: insertion-card-blink 800ms ease-in-out infinite alternate;
 }
 
 .table-stack-card.insert-before {
@@ -2232,30 +2248,19 @@ body {
   to { opacity: 1; }
 }
 
+@keyframes insertion-card-blink {
+  from { opacity: 0.26; }
+  to { opacity: 0.62; }
+}
+
 @media (max-width: 699px) {
   .table-stacks {
-    inset: auto 8% 23%;
+    bottom: 23%;
     height: 38%;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    scroll-padding-inline: 8px;
-    touch-action: pan-x;
   }
 
-  .table-stack {
-    flex: 0 0 44%;
-    scroll-snap-align: center;
-  }
-
-  .table-stack.expanded {
-    flex-basis: 100%;
-    grid-column: auto;
+  .stack-scroll-hint {
+    bottom: 17%;
   }
 
   .mobile-scroll-hint {
@@ -2522,8 +2527,63 @@ body {
 
 .action-dock {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 5px;
+}
+
+.stack-insertion-controls {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(239, 209, 140, 0.24);
+  border-radius: 12px;
+  background: rgba(8, 34, 23, 0.82);
+}
+
+.stack-insertion-position {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #f0dfb8;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.stack-insertion-position button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(239, 209, 140, 0.36);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff1c8;
+}
+
+.stack-insertion-position button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.stack-insertion-add {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: #efd18c;
+  color: #1d281e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.stack-insertion-add:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .action-button {

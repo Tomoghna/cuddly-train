@@ -238,6 +238,10 @@ export function orderStackCards(cards = []) {
 }
 
 export function addCardsToStack(existing = [], candidate = [], side = 'right') {
+  const insertionIndex = side === 'left' ? 0 : existing.length
+  const validInsertion = getValidStackInsertion(existing, candidate, insertionIndex)
+  if (validInsertion) return validInsertion
+
   const orderedCandidate = orderStackCards(candidate)
   return side === 'left'
     ? [...orderedCandidate, ...existing]

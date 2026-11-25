@@ -377,6 +377,24 @@ test('finds a one-card stack extension even when the AI already has two stacks',
   assert.deepEqual(move.cards.map((card) => card.id), ['g'])
 })
 
+test('keeps a joker between sequence cards when the AI extends with a gap-filling card', () => {
+  const existing = [
+    { id: '8-clubs', rank: '8', suit: '♣' },
+    { id: '9-clubs', rank: '9', suit: '♣' },
+    { id: '10-clubs', rank: '10', suit: '♣' },
+  ]
+  const queen = { id: 'queen-clubs', rank: 'Q', suit: '♣' }
+  const joker = { id: '6-hearts', rank: '6', suit: '♥', isJoker: true }
+  const move = findAiStackMove([queen, joker], [{ ownerId: 'cpu-1', cards: existing }], 'cpu-1')
+
+  assert.equal(move.stackIndex, 0)
+  assert.equal(move.side, 'right')
+  assert.deepEqual(
+    addCardsToStack(existing, move.cards, move.side).map((card) => card.id),
+    ['8-clubs', '9-clubs', '10-clubs', '6-hearts', 'queen-clubs'],
+  )
+})
+
 test('does not let an AI extend another player stack before opening its own', () => {
   const stacks = [{
     ownerId: 'player-1',

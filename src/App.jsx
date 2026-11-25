@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Crown,
   Layers3,
@@ -360,6 +362,7 @@ function App() {
   const [isDiscardDropActive, setIsDiscardDropActive] = useState(false)
   const [isJokerPeekOpen, setIsJokerPeekOpen] = useState(false)
   const [selectedStackIndex, setSelectedStackIndex] = useState(null)
+  const [stackInsertionIndex, setStackInsertionIndex] = useState(0)
   const [toast, setToast] = useState('')
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
@@ -1205,6 +1208,7 @@ function App() {
     }
     setSelectedCardIds([])
     setSelectedStackIndex(null)
+    setStackInsertionIndex(0)
     if (canExtendSelectedStack) {
       setToast('Cards inserted. Play another stack or end your turn.')
     } else if (jokerUnknown) {
@@ -1523,6 +1527,10 @@ function App() {
       .filter((index) => canInsertCardsAtIndex(selectedStack.cards, selectedCards, index))
     : []
   const selectedCardsExtendStack = selectedStackInsertionIndexes.length > 0
+  const activeStackInsertionIndex = selectedStackInsertionIndexes.includes(stackInsertionIndex)
+    ? stackInsertionIndex
+    : selectedStackInsertionIndexes[0] ?? 0
+  const activeInsertionPosition = selectedStackInsertionIndexes.indexOf(activeStackInsertionIndex)
 
   return (
     <main className="app-shell">
@@ -1940,6 +1948,16 @@ function App() {
                   role="region"
                   aria-label="Played stacks. Scroll to see all stacks."
                   tabIndex={0}
+                  onWheel={(event) => {
+                    const stacksContainer = event.currentTarget
+                    if (
+                      stacksContainer.scrollWidth > stacksContainer.clientWidth
+                      && Math.abs(event.deltaY) > Math.abs(event.deltaX)
+                    ) {
+                      event.preventDefault()
+                      stacksContainer.scrollLeft += event.deltaY
+                    }
+                  }}
                 >
                   {game.stacks.map((stack, stackIndex) => {
                     const owner = game.players.find((player) => player.id === stack.ownerId)
@@ -1950,6 +1968,30 @@ function App() {
                       : []
                     const canSelectStack = validInsertionIndexes.length > 0
                     const isSelectedStack = selectedStackIndex === stackIndex
+                    const insertionIndex = isSelectedStack
+                      ? validInsertionIndexes.includes(stackInsertionIndex)
+                        ? stackInsertionIndex
+                        : validInsertionIndexes[0] ?? 0
+                      : 0
+                    const previewStack = isSelectedStack && validInsertionIndexes.includes(insertionIndex)
+                      ? insertCardsAtIndex(stack.cards, selectedCards, insertionIndex)
+                      : null
+                    const previewCardIds = new Set(selectedCards.map((card) => card.id))
+                    const previewCards = previewStack?.filter((card) => previewCardIds.has(card.id)) ?? []
+                    const renderInsertionPreview = () => previewCards.map((card, previewIndex) => (
+                      <span
+                        className={`table-stack-card table-stack-insertion-preview ${card.color === 'red' ? 'red-card' : ''}`}
+                        key={`preview-${card.id}`}
+                        style={{
+                          '--stack-card-index': stack.cards.length + previewIndex + 1,
+                          '--stack-card-lift': '0px',
+                          '--stack-card-rotation': '0deg',
+                        }}
+                        aria-hidden="true"
+                      >
+                        <CardArtwork card={card} />
+                      </span>
+                    ))
 
                     return (
                       <div
@@ -1991,6 +2033,7 @@ function App() {
                               setSelectedStackIndex(null)
                             } else {
                               setSelectedStackIndex(stackIndex)
+                              setStackInsertionIndex(validInsertionIndexes[0] ?? 0)
                             }
                           }}
                         >
@@ -1999,32 +2042,48 @@ function App() {
                             <span className="stack-player-name">{ownerName}</span>
                             <span className="stack-target-label">{isSelectedStack ? 'OPEN' : 'TAP TO OPEN'}</span>
                           </span>
-                          <span className={`table-stack-cards${dropTargetStackIndex === stackIndex ? ' is-inserting' : ''}${dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === stack.cards.length ? ' drop-at-end' : ''}`}>
+                          <span
+                            className={`table-stack-cards${dropTargetStackIndex === stackIndex ? ' is-inserting' : ''}${dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === stack.cards.length ? ' drop-at-end' : ''}${isSelectedStack && selectedCards.length > 0 && insertionIndex === stack.cards.length ? ' preview-at-end' : ''}`}
+                          >
                             {stack.cards.map((card, cardIndex) => {
                               const fanPosition = stack.cards.length > 1
                                 ? (cardIndex / (stack.cards.length - 1)) * 2 - 1
                                 : 0
+                              const isInsertionBefore = (
+                                (dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === cardIndex)
+                                || (isSelectedStack && selectedCards.length > 0 && insertionIndex === cardIndex)
+                              )
+                              const isInsertionAfter = isSelectedStack
+                                && selectedCards.length > 0
+                                && insertionIndex === stack.cards.length
+                                && cardIndex === stack.cards.length - 1
                               return (
-                                <span
-                                  className={`table-stack-card ${card.color === 'red' ? 'red-card' : ''}${dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === cardIndex ? ' insert-before' : ''}`}
-                                  key={card.id}
-                                  style={{
-                                    '--stack-card-index': cardIndex,
-                                    '--stack-card-rotation': `${fanPosition * 11}deg`,
-                                    '--stack-card-lift': `${-9 * (1 - fanPosition ** 2)}px`,
-                                  }}
-                                >
-                                  <CardArtwork card={card} />
-                                </span>
+                                <Fragment key={card.id}>
+                                  {isSelectedStack && selectedCards.length > 0 && insertionIndex === cardIndex && renderInsertionPreview()}
+                                  <span
+                                    className={`table-stack-card ${card.color === 'red' ? 'red-card' : ''}${isInsertionBefore ? ' insert-before' : ''}${isInsertionAfter ? ' insert-after' : ''}`}
+                                    style={{
+                                      '--stack-card-index': cardIndex,
+                                      '--stack-card-rotation': `${fanPosition * 11}deg`,
+                                      '--stack-card-lift': `${-9 * (1 - fanPosition ** 2)}px`,
+                                    }}
+                                  >
+                                    <CardArtwork card={card} />
+                                  </span>
+                                </Fragment>
                               )
                             })}
+                            {isSelectedStack && selectedCards.length > 0 && insertionIndex === stack.cards.length && renderInsertionPreview()}
                             {dropTargetStackIndex === stackIndex && dropTargetStackInsertIndex === stack.cards.length && (
                               <span className="table-stack-end-slot" aria-hidden="true" />
                             )}
                           </span>
                         </button>
                         {canSelectStack && !isSelectedStack && (
-                          <span className="stack-choice-hint">Drag cards here to extend</span>
+                          <span className="stack-choice-hint">Select stack to choose a slot, or drag cards here</span>
+                        )}
+                        {isSelectedStack && hasPlayedStack && selectedCards.length === 0 && (
+                          <span className="stack-choice-hint">Select card(s) in your hand to choose an insertion slot</span>
                         )}
                         {isSelectedStack && selectedCards.length > 0 && !selectedStackInsertionIndexes.length && (
                           <span className="stack-choice-hint">Selected cards do not fit this stack</span>
@@ -2037,7 +2096,7 @@ function App() {
               {game.stacks.length > 2 && (
                 <span className="stack-scroll-hint mobile-scroll-hint" aria-hidden="true">SWIPE TO SEE ALL STACKS</span>
               )}
-              {game.stacks.length > 4 && (
+              {game.stacks.length > 2 && (
                 <span className="stack-scroll-hint desktop-scroll-hint" aria-hidden="true">SCROLL TO SEE ALL STACKS</span>
               )}
               <div className="felt-ornament" aria-hidden="true">F</div>
@@ -2128,6 +2187,39 @@ function App() {
               <div className="action-dock">
                 {game.phase === 'draw' ? (
                   <>
+                    {selectedStack && hasPlayedStack && selectedCards.length > 0 && selectedStackInsertionIndexes.length > 0 && (
+                      <div className="stack-insertion-controls">
+                        <div className="stack-insertion-position">
+                          <button
+                            type="button"
+                            onClick={() => setStackInsertionIndex(selectedStackInsertionIndexes[Math.max(0, activeInsertionPosition - 1)])}
+                            disabled={activeInsertionPosition <= 0}
+                            aria-label="Move insertion point left"
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+                          <span aria-live="polite">
+                            Position {activeStackInsertionIndex + 1} of {selectedStack.cards.length + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setStackInsertionIndex(selectedStackInsertionIndexes[Math.min(selectedStackInsertionIndexes.length - 1, activeInsertionPosition + 1)])}
+                            disabled={activeInsertionPosition < 0 || activeInsertionPosition >= selectedStackInsertionIndexes.length - 1}
+                            aria-label="Move insertion point right"
+                          >
+                            <ChevronRight size={16} />
+                          </button>
+                        </div>
+                        <button
+                          className="stack-insertion-add"
+                          type="button"
+                          onClick={() => playSelectedStack(selectedCardIds, selectedStackIndex, activeStackInsertionIndex)}
+                          disabled={!canPlayStack || !canActThisTurn}
+                        >
+                          Add {selectedCards.length === 1 ? 'card' : `${selectedCards.length} cards`} here
+                        </button>
+                      </div>
+                    )}
                     <button className="action-button secondary-action" onClick={drawFromDiscard} disabled={!canDrawThisTurn || game.discard.length === 0}>Take discard</button>
                     <button className="action-button primary-action" onClick={drawFromDeck} disabled={!canDrawThisTurn}><Layers3 size={17} /> Draw card</button>
                     <button className="action-button secondary-action" onClick={() => playSelectedStack()} disabled={!canPlayStack || (selectedCardIds.length < 3 && !selectedCardsExtendStack)}>{game.hasPlayedStackThisTurn ? 'Play another stack' : 'Play stack'} <span>{selectedCardIds.length || ''}</span></button>
